@@ -1,14 +1,15 @@
 /**
  * Waiters: roster + receivables. A waiter's receivable is the sum of
- * their unsettled sales (see src-tauri/src/services/waiter_service.rs)
- * — "Settle" clears it once the business has reconciled with them.
+ * their unsettled sales. This page intentionally uses a dense table so
+ * a large roster stays scannable and every record remains visible.
  */
 
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { setHeaderActions } from "../components/header.js";
-import { createWaiterCard } from "../components/waiter-card.js";
+import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
+import { formatMoney } from "../utils/currency.js";
 import { firstError, isNonEmpty } from "../utils/validation.js";
 
 export const title = "Waiters";
@@ -18,14 +19,20 @@ export async function render(container) {
     <div class="page-heading">
       <div>
         <h1>Waiters</h1>
-        <p class="page-subtitle">Everyone who can be assigned a sale, and what they still owe.</p>
+        <p class="page-subtitle">Roster, activity and unsettled sales in one place.</p>
       </div>
     </div>
     <div class="checkbox-row">
       <input type="checkbox" id="show-inactive" />
       <label for="show-inactive" style="font-size: var(--text-sm); color: var(--color-ink-soft);">Show inactive waiters</label>
     </div>
-    <div class="grid grid-cols-3" id="waiter-grid"></div>
+    <div class="card catalog-table">
+      <div class="card-header">
+        <span class="card-title">Waiter roster</span>
+        <span class="badge badge-neutral" id="waiter-count">0 records</span>
+      </div>
+      <div id="waiter-table"></div>
+    </div>
   `;
 
   const addBtn = document.createElement("button");
@@ -35,14 +42,13 @@ export async function render(container) {
   setHeaderActions(document, [addBtn]);
 
   container.querySelector("#show-inactive").addEventListener("change", () => loadWaiters(container));
-
   await loadWaiters(container);
 }
 
 async function loadWaiters(container) {
   const currency = store.getState().settings?.currency ?? "USD";
   const showInactive = container.querySelector("#show-inactive").checked;
-  const grid = container.querySelector("#waiter-grid");
+  const table = container.querySelector("#waiter-table");
 
   let all, receivables;
   try {
@@ -51,42 +57,71 @@ async function loadWaiters(container) {
       withErrorToast(() => api.waiters.listReceivables()),
     ]);
   } catch {
-    return; // toast already shown
-  }
-
-  const receivableMap = new Map(receivables.map((r) => [r.waiter.id, r.receivable]));
-
-  grid.innerHTML = "";
-  if (!all.length) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-state-title">No waiters yet</div><p>Add your first waiter to start taking sales.</p></div>`;
     return;
   }
 
-  all.forEach((waiter) => {
-    grid.appendChild(
-      createWaiterCard({
-        waiter,
-        receivable: receivableMap.get(waiter.id) ?? 0,
-        currency,
-        onSettle: async (waiterId) => {
-          try {
-            await withErrorToast(() => api.waiters.settle(waiterId));
-            pushToast("Waiter settled.", "success");
-            loadWaiters(container);
-          } catch {
-            /* toast already shown */
-          }
+  const receivableMap = new Map(receivables.map((r) => [r.waiter.id, r.receivable]));
+  container.querySelector("#waiter-count").textContent = `${all.length} record${all.length === 1 ? "" : "s"}`;
+
+  renderTable(table, {
+    columns: [
+      { key: "full_name", label: "Waiter" },
+      { key: "phone", label: "Phone", format: (w) => w.phone || "—" },
+      {
+        key: "status",
+        label: "Status",
+        format: (w) => {
+          const badge = document.createElement("span");
+          badge.className = `badge ${w.is_active ? "badge-sage" : "badge-neutral"}`;
+          badge.textContent = w.is_active ? "Active" : "Inactive";
+          return badge;
         },
-        onToggleActive: async (waiterId, isActive) => {
-          try {
-            await withErrorToast(() => api.waiters.setActive(waiterId, isActive));
-            loadWaiters(container);
-          } catch {
-            /* toast already shown */
+      },
+      {
+        key: "receivable",
+        label: "Receivable",
+        numeric: true,
+        format: (w) => formatMoney(receivableMap.get(w.id) ?? 0, currency),
+      },
+      {
+        key: "actions",
+        label: "Actions",
+        format: (w) => {
+          const actions = document.createElement("div");
+          actions.className = "row-actions";
+          const receivable = receivableMap.get(w.id) ?? 0;
+
+          if (receivable > 0) {
+            const settleBtn = document.createElement("button");
+            settleBtn.className = "btn btn-secondary btn-sm";
+            settleBtn.textContent = "Settle";
+            settleBtn.addEventListener("click", async () => {
+              try {
+                await withErrorToast(() => api.waiters.settle(w.id));
+                pushToast("Waiter settled.", "success");
+                loadWaiters(container);
+              } catch {}
+            });
+            actions.appendChild(settleBtn);
           }
+
+          const toggleBtn = document.createElement("button");
+          toggleBtn.className = "btn btn-ghost btn-sm";
+          toggleBtn.textContent = w.is_active ? "Deactivate" : "Activate";
+          toggleBtn.addEventListener("click", async () => {
+            try {
+              await withErrorToast(() => api.waiters.setActive(w.id, !w.is_active));
+              loadWaiters(container);
+            } catch {}
+          });
+          actions.appendChild(toggleBtn);
+          return actions;
         },
-      })
-    );
+      },
+    ],
+    rows: all,
+    emptyMessage: "No waiters yet — add your first waiter to start taking sales.",
+    getRowKey: (w) => w.id,
   });
 }
 
