@@ -81,3 +81,12 @@
   --z-modal: 41;
   --z-toast: 50;
 }
+
+/* NATRA wordmark uses the requested Anta display face when available. */
+#header-title.header-natra-title {
+  font-family: Anta, "Arial Narrow", Inter, ui-sans-serif, sans-serif;
+  font-size: 1.18rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--color-navy-dark);
+}
