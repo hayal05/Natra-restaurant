@@ -17,14 +17,23 @@ export async function render(container) {
   cart = new Map();
   container.innerHTML = `
     <div class="pos-layout">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Items</span>
-          <select class="select" id="type-filter">
-            <option value="">All types</option><option value="ready_made">Ready-made</option><option value="cookable">Cookable</option>
-          </select>
+      <div class="card pos-items-card">
+        <div class="card-header pos-items-toolbar">
+          <div>
+            <span class="card-title">Items</span>
+            <div class="pos-items-hint">Search by product name, category, type or price</div>
+          </div>
+          <div class="pos-item-filters">
+            <label class="pos-search" aria-label="Search items">
+              <span aria-hidden="true">⌕</span>
+              <input class="input" id="item-search" type="search" placeholder="Search name, category or price…" autocomplete="off" />
+            </label>
+            <select class="select" id="type-filter" aria-label="Filter item type">
+              <option value="">All types</option><option value="ready_made">Ready-made</option><option value="cookable">Cookable</option>
+            </select>
+          </div>
         </div>
-        <div id="item-table"></div>
+        <div id="item-table" class="pos-items-table"></div>
       </div>
       <div class="card pos-sale-panel">
         <div class="card-header"><span class="card-title">Current sale</span></div>
@@ -40,6 +49,7 @@ export async function render(container) {
   const itemTable = container.querySelector("#item-table");
   const waiterSelect = container.querySelector("#waiter-select");
   const typeFilter = container.querySelector("#type-filter");
+  const searchInput = container.querySelector("#item-search");
   let allItems = [];
 
   try {
@@ -57,7 +67,22 @@ export async function render(container) {
 
   function renderItemTable() {
     const filterType = typeFilter.value;
-    const filtered = filterType ? allItems.filter((i) => i.type === filterType) : allItems;
+    const query = searchInput.value.trim().toLocaleLowerCase();
+    const filtered = allItems.filter((item) => {
+      if (filterType && item.type !== filterType) return false;
+      if (!query) return true;
+
+      const searchable = [
+        item.name,
+        categoryName(item),
+        item.type,
+        humanizeEnum(item.type),
+        item.selling_price,
+      ].map((value) => String(value ?? "").toLocaleLowerCase());
+
+      return searchable.some((value) => value.includes(query));
+    });
+
     renderTable(itemTable, {
       columns: [
         { key: "name", label: "Item" },
@@ -76,7 +101,7 @@ export async function render(container) {
           button.addEventListener("click", () => addToCart(item));
           return button;
         }},
-      ], rows: filtered, emptyMessage: "No active items match this filter.", getRowKey: (item) => item.id,
+      ], rows: filtered, emptyMessage: query ? "No items match your search." : "No active items match this filter.", getRowKey: (item) => item.id,
     });
   }
 
@@ -106,6 +131,7 @@ export async function render(container) {
   }
 
   typeFilter.addEventListener("change", renderItemTable);
+  searchInput.addEventListener("input", renderItemTable);
   renderItemTable(); renderCart();
   container.querySelector("#checkout-btn").addEventListener("click", async () => {
     const waiterId = Number(waiterSelect.value);
