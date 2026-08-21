@@ -1,13 +1,9 @@
 /**
- * Renders a data table into `container`.
+ * Renders a responsive data table into `container`.
  *
- * @param {HTMLElement} container
- * @param {{
- *   columns: { key: string, label: string, numeric?: boolean, format?: (row) => string|Node }[],
- *   rows: object[],
- *   emptyMessage?: string,
- *   getRowKey?: (row) => string|number,
- * }} opts
+ * Tables stay horizontally scrollable on narrow windows while the page itself
+ * remains vertically scrollable. This keeps long records usable without
+ * hiding columns or forcing card layouts.
  */
 export function renderTable(container, { columns, rows, emptyMessage = "Nothing here yet.", getRowKey }) {
   container.innerHTML = "";
@@ -19,6 +15,9 @@ export function renderTable(container, { columns, rows, emptyMessage = "Nothing 
     container.appendChild(empty);
     return;
   }
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
 
   const table = document.createElement("table");
   table.className = "data-table";
@@ -53,5 +52,6 @@ export function renderTable(container, { columns, rows, emptyMessage = "Nothing 
   });
   table.appendChild(tbody);
 
-  container.appendChild(table);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
 }
