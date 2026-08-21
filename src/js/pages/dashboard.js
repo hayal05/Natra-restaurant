@@ -12,7 +12,7 @@ import { renderVerticalBarChart } from "../components/vertical-bar-chart.js";
 import { formatMoney } from "../utils/currency.js";
 import { formatDateShort, monthName } from "../utils/dates.js";
 
-export const title = "NATRA";
+export const title = "Dashboard";
 
 export async function render(container) {
   clearHeaderActions(document);
