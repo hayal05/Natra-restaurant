@@ -1,14 +1,3 @@
-/**
- * Bootstraps the app: figures out whether this is a first run (needs
- * admin setup) or a returning install (needs login), builds the DOM
- * shell once, and hands control to the router.
- *
- * Nav items, header title/actions, and the toast stack are all owned
- * by components/ modules (sidebar.js, header.js, notification.js) —
- * this file just wires the shell's DOM together and hands control to
- * the router.
- */
-
 import * as api from "./api.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
@@ -27,7 +16,7 @@ function buildLayouts() {
   const publicOutlet = document.createElement("div");
   publicOutlet.id = "public-outlet";
   publicOutlet.style.width = "100%";
-  publicOutlet.style.maxWidth = "24rem";
+  publicOutlet.style.maxWidth = "28rem";
   publicScreen.appendChild(publicOutlet);
 
   const shell = document.createElement("div");
@@ -36,15 +25,16 @@ function buildLayouts() {
   shell.innerHTML = `
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <img src="../assets/logo.svg" alt="" />
-        <span class="sidebar-brand-name">Restaurant Manager</span>
+        <img src="assets/logo.svg" alt="NATRA" />
+        <span class="sidebar-brand-name">NATRA</span>
       </div>
       <nav class="sidebar-nav" id="sidebar-nav"></nav>
       <div class="sidebar-footer">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap: var(--space-2);">
-          <span id="current-user-label" style="color: var(--color-paper-ink-soft); font-size: var(--text-sm);"></span>
-          <button id="logout-btn" style="color: var(--color-navy-bright); font-size: var(--text-sm); font-weight: 500;">Log out</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;">
+          <span id="current-user-label" style="color:var(--color-paper-ink-soft);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+          <button id="logout-btn" style="color:var(--color-navy-bright);font-size:var(--text-sm);font-weight:650;">Log out</button>
         </div>
+        <div style="margin-top:.45rem;color:#6f88a3;font-size:.68rem;">NATRA Management</div>
       </div>
     </aside>
     <div class="main">
@@ -61,7 +51,6 @@ function buildLayouts() {
   appRoot.appendChild(publicScreen);
   appRoot.appendChild(shell);
   mountToastStack(appRoot);
-
   renderNavItems(shell.querySelector("#sidebar-nav"));
 
   shell.querySelector("#logout-btn").addEventListener("click", () => {
@@ -111,7 +100,7 @@ async function bootstrap() {
   );
 
   store.subscribe(({ settings }) => {
-    if (settings) document.title = `${settings.restaurant_name} — Restaurant Manager`;
+    if (settings) document.title = `${settings.restaurant_name} — NATRA`;
   });
 
   let initialized = false;
@@ -125,15 +114,9 @@ async function bootstrap() {
     navigate("/setup");
     return;
   }
-
   navigate("/login");
 }
 
-/**
- * Called by auth/login.js and auth/initialization.js once a user is
- * authenticated. Loads settings, stores the user, and moves to the
- * dashboard.
- */
 export async function completeLogin(user) {
   setUser(user);
   try {
