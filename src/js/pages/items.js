@@ -1,14 +1,15 @@
 /**
  * Items catalog. Ready-made items carry a purchase cost here directly;
- * cookable items don't — their cost is tracked separately via Raw
- * Materials (see src-tauri/src/models/item.rs for the enforced rule).
+ * cookable items don't — their cost is tracked separately via Raw Materials.
+ * The catalog is intentionally table-based for fast scanning of large menus.
  */
 
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { setHeaderActions } from "../components/header.js";
-import { createProductCard } from "../components/product-card.js";
+import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
+import { formatMoney } from "../utils/currency.js";
 import { firstError, isNonEmpty, isNonNegativeNumber } from "../utils/validation.js";
 
 export const title = "Items";
@@ -18,10 +19,10 @@ export async function render(container) {
     <div class="page-heading">
       <div>
         <h1>Items</h1>
-        <p class="page-subtitle">Ready-made items carry their own cost. Cookable items are priced only — cost comes from raw materials.</p>
+        <p class="page-subtitle">Menu catalog with unit cost, selling price, margin and availability.</p>
       </div>
     </div>
-    <div class="field" style="flex-direction: row; align-items: center; gap: var(--space-2);">
+    <div class="field" style="flex-direction: row; align-items: center; gap: var(--space-2); flex-wrap: wrap;">
       <select class="select" id="type-filter" style="width: 12rem;">
         <option value="">All types</option>
         <option value="ready_made">Ready-made</option>
@@ -32,7 +33,13 @@ export async function render(container) {
         <label for="show-inactive" style="font-size: var(--text-sm); color: var(--color-ink-soft);">Show inactive</label>
       </div>
     </div>
-    <div class="grid grid-cols-3" id="item-grid"></div>
+    <div class="card catalog-table">
+      <div class="card-header">
+        <span class="card-title">Menu items</span>
+        <span class="badge badge-neutral" id="item-count">0 records</span>
+      </div>
+      <div id="item-table"></div>
+    </div>
   `;
 
   let categories = [];
@@ -48,17 +55,18 @@ export async function render(container) {
   addBtn.addEventListener("click", () => openItemModal(container, categories));
   setHeaderActions(document, [addBtn]);
 
-  container.querySelector("#type-filter").addEventListener("change", () => loadItems(container));
-  container.querySelector("#show-inactive").addEventListener("change", () => loadItems(container));
+  container.querySelector("#type-filter").addEventListener("change", () => loadItems(container, categories));
+  container.querySelector("#show-inactive").addEventListener("change", () => loadItems(container, categories));
 
-  await loadItems(container);
+  await loadItems(container, categories);
 }
 
-async function loadItems(container) {
+async function loadItems(container, categories = []) {
   const currency = store.getState().settings?.currency ?? "USD";
   const showInactive = container.querySelector("#show-inactive").checked;
   const itemType = container.querySelector("#type-filter").value || undefined;
-  const grid = container.querySelector("#item-grid");
+  const table = container.querySelector("#item-table");
+  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
 
   let items;
   try {
@@ -66,32 +74,83 @@ async function loadItems(container) {
       api.items.list({ only_active: !showInactive, item_type: itemType ?? null, category_id: null })
     );
   } catch {
-    return; // toast already shown
-  }
-
-  grid.innerHTML = "";
-  if (!items.length) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-state-title">No items yet</div><p>Add your first menu item to start selling.</p></div>`;
     return;
   }
 
-  items.forEach((item) => {
-    grid.appendChild(
-      createProductCard({
-        item,
-        currency,
-        mode: "catalog",
-        onEdit: (itemId) => openPricingModal(container, item),
-        onToggleActive: async (itemId, isActive) => {
-          try {
-            await withErrorToast(() => api.items.setActive(itemId, isActive));
-            loadItems(container);
-          } catch {
-            /* toast already shown */
-          }
+  container.querySelector("#item-count").textContent = `${items.length} record${items.length === 1 ? "" : "s"}`;
+
+  renderTable(table, {
+    columns: [
+      { key: "name", label: "Item" },
+      {
+        key: "type",
+        label: "Type",
+        format: (item) => {
+          const badge = document.createElement("span");
+          const cookable = item.type === "cookable";
+          badge.className = `badge ${cookable ? "badge-navy" : "badge-neutral"}`;
+          badge.textContent = cookable ? "Cookable" : "Ready-made";
+          return badge;
         },
-      })
-    );
+      },
+      { key: "category", label: "Category", format: (item) => categoryMap.get(item.category_id) || "—" },
+      {
+        key: "purchase_cost",
+        label: "Unit cost",
+        numeric: true,
+        format: (item) => item.purchase_cost == null ? "Raw materials" : formatMoney(item.purchase_cost, currency),
+      },
+      { key: "selling_price", label: "Selling price", numeric: true, format: (item) => formatMoney(item.selling_price, currency) },
+      {
+        key: "margin",
+        label: "Margin",
+        numeric: true,
+        format: (item) => {
+          if (item.purchase_cost == null) return "—";
+          const margin = item.selling_price - item.purchase_cost;
+          return formatMoney(margin, currency);
+        },
+      },
+      {
+        key: "status",
+        label: "Status",
+        format: (item) => {
+          const badge = document.createElement("span");
+          badge.className = `badge ${item.is_active ? "badge-sage" : "badge-neutral"}`;
+          badge.textContent = item.is_active ? "Active" : "Inactive";
+          return badge;
+        },
+      },
+      {
+        key: "actions",
+        label: "Actions",
+        format: (item) => {
+          const actions = document.createElement("div");
+          actions.className = "row-actions";
+
+          const editBtn = document.createElement("button");
+          editBtn.className = "btn btn-secondary btn-sm";
+          editBtn.textContent = "Edit pricing";
+          editBtn.addEventListener("click", () => openPricingModal(container, item, categories));
+          actions.appendChild(editBtn);
+
+          const toggleBtn = document.createElement("button");
+          toggleBtn.className = "btn btn-ghost btn-sm";
+          toggleBtn.textContent = item.is_active ? "Deactivate" : "Activate";
+          toggleBtn.addEventListener("click", async () => {
+            try {
+              await withErrorToast(() => api.items.setActive(item.id, !item.is_active));
+              loadItems(container, categories);
+            } catch {}
+          });
+          actions.appendChild(toggleBtn);
+          return actions;
+        },
+      },
+    ],
+    rows: items,
+    emptyMessage: "No items yet — add your first menu item to start selling.",
+    getRowKey: (item) => item.id,
   });
 }
 
@@ -181,28 +240,19 @@ function openItemModal(container, categories) {
     }
 
     const categoryId = form.categoryId.value ? Number(form.categoryId.value) : null;
-
     saveBtn.disabled = true;
     try {
-      await withErrorToast(() =>
-        api.items.create({
-          category_id: categoryId,
-          name,
-          item_type: itemType,
-          purchase_cost: purchaseCost,
-          selling_price: sellingPrice,
-        })
-      );
+      await withErrorToast(() => api.items.create({ category_id: categoryId, name, item_type: itemType, purchase_cost: purchaseCost, selling_price: sellingPrice }));
       pushToast("Item added.", "success");
       closeModal();
-      loadItems(container);
+      loadItems(container, categories);
     } catch {
       saveBtn.disabled = false;
     }
   });
 }
 
-function openPricingModal(container, item) {
+function openPricingModal(container, item, categories = []) {
   const isCookable = item.type === "cookable";
   const form = document.createElement("form");
   form.noValidate = true;
@@ -215,15 +265,11 @@ function openPricingModal(container, item) {
       <input class="input input-mono" id="edit-price" type="number" step="0.01" min="0" value="${item.selling_price}" />
       <span class="field-error" id="edit-price-error"></span>
     </div>
-    ${
-      isCookable
-        ? ""
-        : `<div class="field">
-            <label class="field-label" for="edit-cost">Purchase cost</label>
-            <input class="input input-mono" id="edit-cost" type="number" step="0.01" min="0" value="${item.purchase_cost ?? ""}" />
-            <span class="field-error" id="edit-cost-error"></span>
-          </div>`
-    }
+    ${isCookable ? "" : `<div class="field">
+      <label class="field-label" for="edit-cost">Purchase cost</label>
+      <input class="input input-mono" id="edit-cost" type="number" step="0.01" min="0" value="${item.purchase_cost ?? ""}" />
+      <span class="field-error" id="edit-cost-error"></span>
+    </div>`}
   `;
 
   const cancelBtn = document.createElement("button");
@@ -243,10 +289,8 @@ function openPricingModal(container, item) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearFormErrors(form);
-
     const sellingPrice = Number(form.querySelector("#edit-price").value);
     const purchaseCost = isCookable ? null : Number(form.querySelector("#edit-cost").value);
-
     if (!isNonNegativeNumber(sellingPrice)) {
       showFieldError(form, "edit-price", "Enter a valid selling price.");
       return;
@@ -255,13 +299,12 @@ function openPricingModal(container, item) {
       showFieldError(form, "edit-cost", "Enter a valid purchase cost.");
       return;
     }
-
     saveBtn.disabled = true;
     try {
       await withErrorToast(() => api.items.updatePricing(item.id, sellingPrice, purchaseCost));
       pushToast("Pricing updated.", "success");
       closeModal();
-      loadItems(container);
+      loadItems(container, categories);
     } catch {
       saveBtn.disabled = false;
     }
