@@ -76,9 +76,10 @@
   transform: rotate(-90deg);
 }
 
+/* Slightly wider ring for a stronger, modern dashboard visual while keeping the center readable. */
 .donut-chart-segment {
   fill: none;
-  stroke-width: 3.2;
+  stroke-width: 4.4;
   transition: stroke-dasharray var(--dur-base) var(--ease-standard);
 }
 
