@@ -21,6 +21,24 @@ function buildLayouts() {
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
 }
 
+function promotePageActions(appOutlet, shell) {
+  const headerActions = shell.querySelector("#header-actions");
+  if (!headerActions) return;
+
+  const existing = new Set(Array.from(headerActions.querySelectorAll("button")).map((b) => b.textContent.trim()));
+  const candidates = appOutlet.querySelectorAll(".card > .card-header button, .card > .card-header > div button");
+
+  candidates.forEach((button) => {
+    const label = button.textContent.trim();
+    if (!label || existing.has(label)) {
+      if (existing.has(label)) button.remove();
+      return;
+    }
+    existing.add(label);
+    headerActions.appendChild(button);
+  });
+}
+
 async function bootstrap(){
   const {publicScreen,publicOutlet,shell,appOutlet}=buildLayouts();
   registerRoutes({
@@ -28,6 +46,10 @@ async function bootstrap(){
     "/dashboard":{loader:()=>import("./pages/dashboard.js")}, "/pos":{loader:()=>import("./pages/pos.js")}, "/waiters":{loader:()=>import("./pages/waiters.js")}, "/items":{loader:()=>import("./pages/items.js")},
     "/raw-materials":{loader:()=>import("./pages/raw-materials.js")}, "/expenses":{loader:()=>import("./pages/expenses.js")}, "/reports":{loader:()=>import("./pages/reports.js")}, "/settings":{loader:()=>import("./pages/settings.js")}
   });
+
+  const actionObserver = new MutationObserver(() => promotePageActions(appOutlet, shell));
+  actionObserver.observe(appOutlet, { childList: true, subtree: true });
+
   initRouter((def)=>{if(def.public){shell.style.display="none";publicScreen.style.display="flex";return publicOutlet}publicScreen.style.display="none";shell.style.display="grid";return appOutlet},{onNavigate:({path,title})=>{setActiveNavItem(shell.querySelector("#sidebar-nav"),path);setHeaderTitle(shell,title);const userLabel=shell.querySelector("#current-user-label");const {user}=store.getState();if(userLabel)userLabel.textContent=user?user.full_name:"";}});
   store.subscribe(({settings})=>{if(settings)document.title=`${settings.restaurant_name} — NATRA`});
   let initialized=false;try{initialized=await api.auth.isInitialized()}catch(err){pushToast(typeof err==="string"?err:"Couldn't reach the local database.","error",0)}
