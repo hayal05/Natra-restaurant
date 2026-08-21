@@ -56,7 +56,7 @@
 /* All records use dense, scan-friendly tables rather than card grids. */
 .table-wrap { width:100%; max-width:100%; overflow:auto; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable; border:1px solid #d7e1eb; border-radius:6px; background:#fff; }
 .data-table { width:100%; min-width:44rem; font-size:.76rem; border-collapse:separate; border-spacing:0; }
-.data-table th { text-align:left; font-size:.66rem; font-weight:750; letter-spacing:.035em; text-transform:none; color:#fff; padding:.62rem .65rem; border-right:1px solid rgba(255,255,255,.12); border-bottom:1px solid #1a4d80; background:#174a7d; position:sticky; top:0; z-index:2; white-space:nowrap; }
+.data-table th { text-align:left; font-size:.66rem; font-weight:750; letter-spacing:.035em; text-transform:none; color:#fff; padding:.62rem .65rem; border-right:1px solid rgba(255,255,255,.10); border-bottom:1px solid rgba(26,77,128,.72); background:rgba(23,74,125,.88); position:sticky; top:0; z-index:2; white-space:nowrap; }
 .data-table th:last-child { border-right:0; }
 .data-table td { padding:.6rem .65rem; border-bottom:1px solid #e4eaf0; color:#34465b; vertical-align:middle; background:#fff; }
 .data-table tbody tr:nth-child(even) td { background:#f5f9fc; }
