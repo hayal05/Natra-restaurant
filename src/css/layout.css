@@ -134,6 +134,56 @@
 .pos-sale-panel .data-table { min-width:26rem; }
 .pos-sale-panel .data-table th,.pos-sale-panel .data-table td { padding-inline:.4rem; }
 
+/* Compact, no-horizontal-scroll tables for the primary POS and dashboard panels. */
+#item-table .table-wrap,
+#receivables-table .table-wrap { overflow-x:hidden; }
+
+#item-table .data-table,
+#receivables-table .data-table {
+  min-width:0;
+  width:100%;
+  table-layout:fixed;
+}
+
+#item-table .data-table th,
+#item-table .data-table td,
+#receivables-table .data-table th,
+#receivables-table .data-table td {
+  padding-left:.38rem;
+  padding-right:.38rem;
+}
+
+#item-table .data-table th:nth-child(1),
+#item-table .data-table td:nth-child(1) { width:25%; }
+#item-table .data-table th:nth-child(2),
+#item-table .data-table td:nth-child(2) { width:19%; }
+#item-table .data-table th:nth-child(3),
+#item-table .data-table td:nth-child(3) { width:18%; }
+#item-table .data-table th:nth-child(4),
+#item-table .data-table td:nth-child(4) { width:18%; }
+#item-table .data-table th:nth-child(5),
+#item-table .data-table td:nth-child(5) { width:20%; }
+
+#item-table .data-table td:not(.col-numeric),
+#receivables-table .data-table td:not(.col-numeric) {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+#item-table .data-table td .badge { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#item-table .data-table td:last-child { text-align:right; }
+#item-table .data-table td:last-child .btn { max-width:100%; padding-inline:.5rem; }
+
+#receivables-table .data-table th:nth-child(1),
+#receivables-table .data-table td:nth-child(1) { width:47%; }
+#receivables-table .data-table th:nth-child(2),
+#receivables-table .data-table td:nth-child(2) { width:28%; }
+#receivables-table .data-table th:nth-child(3),
+#receivables-table .data-table td:nth-child(3) { width:25%; }
+#receivables-table .data-table td:last-child { text-align:right; }
+#receivables-table .data-table td:last-child .btn { max-width:100%; padding-inline:.48rem; }
+
 .screen-centered {
   min-height:100dvh; width:100%; display:flex; align-items:center; justify-content:center;
   background:linear-gradient(135deg,#edf3f9 0%,#f8fafc 55%,#e6eef6 100%); padding:1.5rem;
@@ -152,5 +202,13 @@
   .grid-cols-3,.grid-cols-4 { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .content { padding:.9rem; }
   .header { padding:0 .9rem; }
+  #item-table .data-table,
+  #receivables-table .data-table { font-size:.7rem; }
+  #item-table .data-table th,
+  #item-table .data-table td,
+  #receivables-table .data-table th,
+  #receivables-table .data-table td { padding-left:.28rem; padding-right:.28rem; }
+  #item-table .data-table td:last-child .btn,
+  #receivables-table .data-table td:last-child .btn { padding-inline:.38rem; }
 }
 @media (max-width:480px) { .grid-cols-2,.grid-cols-3,.grid-cols-4 { grid-template-columns:1fr; } }
