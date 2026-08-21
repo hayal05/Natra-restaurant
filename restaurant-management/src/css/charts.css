@@ -1,0 +1,347 @@
+/* Simple bar-list visuals (sales mix, cash flow) — no charting library,
+   just labeled tracks filled by percentage. See components/bar-chart.js. */
+
+.chart-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chart-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.chart-bar-label {
+  width: 8rem;
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-bar-track {
+  flex: 1;
+  height: 0.75rem;
+  background: var(--color-paper-alt);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.chart-bar-fill {
+  height: 100%;
+  background: var(--color-navy);
+  border-radius: 999px;
+  transition: width var(--dur-base) var(--ease-standard);
+}
+
+.chart-bar-fill.tone-sage {
+  background: var(--color-sage);
+}
+
+.chart-bar-fill.tone-rust {
+  background: var(--color-rust);
+}
+
+.chart-bar-value {
+  width: 5.5rem;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-soft);
+}
+
+/* ---- donut chart (sales mix) ---- */
+
+.donut-chart {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.donut-chart-figure {
+  position: relative;
+  width: 9.5rem;
+  height: 9.5rem;
+  flex-shrink: 0;
+}
+
+.donut-chart-figure svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.donut-chart-segment {
+  fill: none;
+  stroke-width: 3.2;
+  transition: stroke-dasharray var(--dur-base) var(--ease-standard);
+}
+
+.donut-chart-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.donut-chart-center-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.1;
+}
+
+.donut-chart-center-label {
+  font-size: var(--text-xs);
+  color: var(--color-ink-faint);
+  margin-top: 2px;
+}
+
+.donut-legend {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.donut-legend-swatch {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.donut-legend-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-ink-soft);
+}
+
+.donut-legend-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-soft);
+  flex-shrink: 0;
+}
+
+/* ---- line chart (revenue vs. profit trend) ---- */
+
+.line-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.line-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.line-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-ink-soft);
+}
+
+.line-chart-legend-swatch {
+  width: 0.85rem;
+  height: 2px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.line-chart-figure {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.line-chart-gridline {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.line-chart-axis-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  fill: var(--color-ink-faint);
+}
+
+.line-chart-path-revenue {
+  fill: none;
+  stroke: var(--color-navy);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.line-chart-path-profit {
+  fill: none;
+  stroke: var(--color-sage);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.line-chart-area-revenue {
+  fill: var(--color-navy);
+  opacity: 0.07;
+}
+
+.line-chart-dot-revenue {
+  fill: var(--color-navy);
+}
+
+.line-chart-dot-profit {
+  fill: var(--color-sage);
+}
+
+/* ---- trend card split layout (line chart + vertical bar chart) ---- */
+
+.trend-split {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-5);
+}
+
+.trend-split-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.trend-split-aside {
+  flex: 0 0 20rem;
+  border-left: 1px solid var(--color-border);
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+}
+
+.trend-split-aside-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-soft);
+  margin-bottom: var(--space-3);
+}
+
+.trend-split-aside-body {
+  flex: 1;
+  display: flex;
+}
+
+/* ---- vertical bar chart (revenue vs. cost, grouped by month) ---- */
+
+.vbar-chart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 9rem;
+}
+
+.vbar-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.vbar-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-ink-soft);
+}
+
+.vbar-chart-legend-swatch {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.vbar-chart-groups {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.vbar-chart-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+}
+
+.vbar-chart-group-bars {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.vbar-chart-track {
+  flex: 1;
+  max-width: 0.85rem;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  background: var(--color-paper-alt);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.vbar-chart-bar {
+  width: 100%;
+  background: var(--color-navy);
+  transition: height var(--dur-base) var(--ease-standard);
+}
+
+.vbar-chart-bar.tone-sage {
+  background: var(--color-sage);
+}
+
+.vbar-chart-bar.tone-rust {
+  background: var(--color-rust);
+}
+
+.vbar-chart-bar.tone-amber {
+  background: var(--color-amber);
+}
+
+.vbar-chart-group-label {
+  font-size: 0.6875rem;
+  color: var(--color-ink-faint);
+  margin-top: var(--space-2);
+  white-space: nowrap;
+}
