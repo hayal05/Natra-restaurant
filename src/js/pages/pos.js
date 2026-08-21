@@ -1,14 +1,14 @@
 /**
- * Point of sale. A waiter is picked once per sale, items are tapped
- * into a cart, and "Complete sale" calls the atomic checkout command
- * (src-tauri/src/services/sales_service.rs) — either the whole sale
- * writes or none of it does.
+ * Point of sale. A waiter is picked once per sale, items are added from a
+ * dense table, and "Complete sale" calls the atomic checkout command
+ * (src-tauri/src/services/sales_service.rs) — either the whole sale writes
+ * or none of it does.
  */
 
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { clearHeaderActions } from "../components/header.js";
-import { createProductCard } from "../components/product-card.js";
+import { renderTable } from "../components/table.js";
 import { formatMoney } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
 
@@ -25,10 +25,10 @@ export async function render(container) {
     <div class="page-heading">
       <div>
         <h1>Point of sale</h1>
-        <p class="page-subtitle">Pick a waiter, tap items to add them, then complete the sale.</p>
+        <p class="page-subtitle">Select a waiter, add items from the table, then complete the sale.</p>
       </div>
     </div>
-    <div class="grid" style="grid-template-columns: 1fr 22rem; align-items: start;">
+    <div class="pos-layout">
       <div class="card">
         <div class="card-header">
           <span class="card-title">Items</span>
@@ -40,9 +40,10 @@ export async function render(container) {
             </select>
           </div>
         </div>
-        <div class="grid grid-cols-3" id="item-grid"></div>
+        <div id="item-table"></div>
       </div>
-      <div class="card" style="position: sticky; top: 0;">
+
+      <div class="card pos-sale-panel">
         <div class="card-header"><span class="card-title">Current sale</span></div>
         <div class="field">
           <label class="field-label" for="waiter-select">Waiter</label>
@@ -56,10 +57,11 @@ export async function render(container) {
             <option value="other">Other</option>
           </select>
         </div>
-        <div id="cart-lines" style="margin-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2);"></div>
-        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--color-border);">
+        <div class="pos-cart-heading">Sale lines</div>
+        <div id="cart-lines"></div>
+        <div class="pos-total">
           <span class="field-label">Total</span>
-          <span class="ticket-card-value" id="cart-total" style="margin: 0; font-size: var(--text-lg);">${formatMoney(0)}</span>
+          <span class="ticket-card-value" id="cart-total">${formatMoney(0)}</span>
         </div>
         <button class="btn btn-primary" id="checkout-btn" style="width: 100%; margin-top: var(--space-4);" disabled>
           Complete sale
@@ -69,7 +71,7 @@ export async function render(container) {
   `;
 
   const currency = store.getState().settings?.currency ?? "USD";
-  const itemGrid = container.querySelector("#item-grid");
+  const itemTable = container.querySelector("#item-table");
   const waiterSelect = container.querySelector("#waiter-select");
   const typeFilter = container.querySelector("#type-filter");
 
@@ -92,34 +94,52 @@ export async function render(container) {
     return; // toast already shown
   }
 
-  function renderItemGrid() {
-    itemGrid.innerHTML = "";
+  function renderItemTable() {
     const filterType = typeFilter.value;
     const filtered = filterType ? allItems.filter((i) => i.type === filterType) : allItems;
 
-    if (!filtered.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.innerHTML = `<div class="empty-state-title">No items yet</div><p>Add items from the Items page first.</p>`;
-      itemGrid.appendChild(empty);
-      return;
-    }
-
-    filtered.forEach((item) => {
-      itemGrid.appendChild(
-        createProductCard({
-          item,
-          currency,
-          mode: "pos",
-          onSelect: (itemId) => addToCart(item),
-        })
-      );
+    renderTable(itemTable, {
+      columns: [
+        { key: "name", label: "Item" },
+        {
+          key: "type",
+          label: "Type",
+          format: (item) => {
+            const badge = document.createElement("span");
+            const cookable = item.type === "cookable";
+            badge.className = `badge ${cookable ? "badge-navy" : "badge-neutral"}`;
+            badge.textContent = cookable ? "Cookable" : "Ready-made";
+            return badge;
+          },
+        },
+        {
+          key: "selling_price",
+          label: "Unit price",
+          numeric: true,
+          format: (item) => formatMoney(item.selling_price, currency),
+        },
+        {
+          key: "action",
+          label: "Action",
+          format: (item) => {
+            const button = document.createElement("button");
+            button.className = "btn btn-primary btn-sm";
+            button.textContent = cart.has(item.id) ? "Add +1" : "Add";
+            button.addEventListener("click", () => addToCart(item));
+            return button;
+          },
+        },
+      ],
+      rows: filtered,
+      emptyMessage: "No active items match this filter.",
+      getRowKey: (item) => item.id,
     });
   }
 
   function addToCart(item) {
     const existing = cart.get(item.id);
     cart.set(item.id, { item, quantity: (existing?.quantity ?? 0) + 1 });
+    renderItemTable();
     renderCart();
   }
 
@@ -132,6 +152,7 @@ export async function render(container) {
     } else {
       cart.set(itemId, { ...line, quantity: nextQty });
     }
+    renderItemTable();
     renderCart();
   }
 
@@ -140,39 +161,75 @@ export async function render(container) {
     const totalEl = container.querySelector("#cart-total");
     const checkoutBtn = container.querySelector("#checkout-btn");
 
-    cartLines.innerHTML = "";
-    if (cart.size === 0) {
-      cartLines.innerHTML = `<p style="color: var(--color-ink-soft); font-size: var(--text-sm);">No items yet — tap something on the left.</p>`;
-    }
-
+    const rows = Array.from(cart.values());
     let total = 0;
-    cart.forEach(({ item, quantity }) => {
-      const lineTotal = item.selling_price * quantity;
-      total += lineTotal;
+    rows.forEach(({ item, quantity }) => {
+      total += item.selling_price * quantity;
+    });
 
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex; align-items:center; gap: var(--space-2);";
-      row.innerHTML = `
-        <div style="flex:1; min-width:0;">
-          <div style="font-size: var(--text-sm); font-weight:500;">${escapeHtml(item.name)}</div>
-          <div style="font-size: var(--text-xs); color: var(--color-ink-soft);">${humanizeEnum(item.type)} · ${formatMoney(item.selling_price, currency)}</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" data-action="dec">−</button>
-        <span class="input-mono" style="width:1.5rem; text-align:center; font-size: var(--text-sm);">${quantity}</span>
-        <button class="btn btn-ghost btn-sm" data-action="inc">+</button>
-        <span class="entity-card-value" style="width:4.5rem; text-align:right;">${formatMoney(lineTotal, currency)}</span>
-      `;
-      row.querySelector('[data-action="dec"]').addEventListener("click", () => changeQuantity(item.id, -1));
-      row.querySelector('[data-action="inc"]').addEventListener("click", () => changeQuantity(item.id, 1));
-      cartLines.appendChild(row);
+    renderTable(cartLines, {
+      columns: [
+        {
+          key: "item",
+          label: "Item",
+          format: (line) => {
+            const wrap = document.createElement("div");
+            const name = document.createElement("div");
+            name.style.fontWeight = "650";
+            name.textContent = line.item.name;
+            const meta = document.createElement("div");
+            meta.style.cssText = "font-size:.72rem;color:var(--color-ink-soft);margin-top:2px;";
+            meta.textContent = `${humanizeEnum(line.item.type)} · ${formatMoney(line.item.selling_price, currency)}`;
+            wrap.append(name, meta);
+            return wrap;
+          },
+        },
+        {
+          key: "quantity",
+          label: "Qty",
+          numeric: true,
+          format: (line) => {
+            const controls = document.createElement("div");
+            controls.className = "pos-qty-controls";
+
+            const dec = document.createElement("button");
+            dec.className = "btn btn-ghost btn-sm";
+            dec.textContent = "−";
+            dec.title = "Decrease quantity";
+            dec.addEventListener("click", () => changeQuantity(line.item.id, -1));
+
+            const qty = document.createElement("span");
+            qty.className = "input-mono";
+            qty.textContent = String(line.quantity);
+
+            const inc = document.createElement("button");
+            inc.className = "btn btn-ghost btn-sm";
+            inc.textContent = "+";
+            inc.title = "Increase quantity";
+            inc.addEventListener("click", () => changeQuantity(line.item.id, 1));
+
+            controls.append(dec, qty, inc);
+            return controls;
+          },
+        },
+        {
+          key: "total",
+          label: "Total",
+          numeric: true,
+          format: (line) => formatMoney(line.item.selling_price * line.quantity, currency),
+        },
+      ],
+      rows,
+      emptyMessage: "No items yet — add something from the Items table.",
+      getRowKey: (line) => line.item.id,
     });
 
     totalEl.textContent = formatMoney(total, currency);
     checkoutBtn.disabled = cart.size === 0;
   }
 
-  typeFilter.addEventListener("change", renderItemGrid);
-  renderItemGrid();
+  typeFilter.addEventListener("change", renderItemTable);
+  renderItemTable();
   renderCart();
 
   container.querySelector("#checkout-btn").addEventListener("click", async () => {
@@ -198,6 +255,7 @@ export async function render(container) {
       const result = await api.pos.checkout(req);
       pushToast(`Sale completed — ${formatMoney(result.sale.total_amount, currency)}.`, "success");
       cart = new Map();
+      renderItemTable();
       renderCart();
     } catch (err) {
       pushToast(typeof err === "string" ? err : "Couldn't complete the sale.", "error");
