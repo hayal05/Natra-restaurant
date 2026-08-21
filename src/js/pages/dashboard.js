@@ -1,15 +1,10 @@
 /**
- * Dashboard: the "walk in and see how the day looks" page. Pulls a
- * single aggregated payload from dashboard_summary (see
- * src-tauri/src/services/dashboard_service.rs) rather than firing off
- * half a dozen separate commands.
+ * Dashboard: the "walk in and see how the day looks" page.
  */
-
 import * as api from "../api.js";
-import { store, withErrorToast } from "../state.js";
+import { store, withErrorToast, pushToast } from "../state.js";
 import { clearHeaderActions } from "../components/header.js";
 import { createStatCard } from "../components/stat-card.js";
-import { createWaiterCard } from "../components/waiter-card.js";
 import { renderTable } from "../components/table.js";
 import { renderDonutChart } from "../components/donut-chart.js";
 import { renderLineChart } from "../components/line-chart.js";
@@ -21,19 +16,12 @@ export const title = "Dashboard";
 
 export async function render(container) {
   clearHeaderActions(document);
-
   container.innerHTML = `
-    <div class="page-heading">
-      <div>
-        <h1>Dashboard</h1>
-        <p class="page-subtitle">Today's performance and what's still outstanding.</p>
-      </div>
-    </div>
     <div class="grid grid-cols-4" id="stat-row"></div>
     <div class="grid grid-cols-2">
       <div class="card">
         <div class="card-header"><span class="card-title">Waiter receivables</span></div>
-        <div class="grid" id="receivables-list" style="gap: var(--space-3);"></div>
+        <div id="receivables-table"></div>
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">Sales mix — this month</span></div>
@@ -57,67 +45,46 @@ export async function render(container) {
   `;
 
   const currency = store.getState().settings?.currency ?? "USD";
-
   let summary;
   try {
     summary = await withErrorToast(() => api.dashboard.summary());
-  } catch {
-    return; // toast already shown
-  }
+  } catch { return; }
 
   const statRow = container.querySelector("#stat-row");
-  statRow.appendChild(createStatCard({
-    label: "Today's sales",
-    value: formatMoney(summary.today.sales, currency),
-  }));
-  statRow.appendChild(createStatCard({
-    label: "Today's profit",
-    value: formatMoney(summary.today.profit, currency),
-    tone: summary.today.profit >= 0 ? "sage" : "rust",
-  }));
-  statRow.appendChild(createStatCard({
-    label: "This month's profit",
-    value: formatMoney(summary.this_month.profit, currency),
-    tone: summary.this_month.profit >= 0 ? "sage" : "rust",
-    sublabel: `on ${formatMoney(summary.this_month.sales, currency)} sales`,
-  }));
-  statRow.appendChild(createStatCard({
-    label: "Waiter receivables",
-    value: formatMoney(summary.total_receivable, currency),
-    tone: summary.total_receivable > 0 ? "rust" : "sage",
-  }));
+  statRow.appendChild(createStatCard({ label: "Today's sales", value: formatMoney(summary.today.sales, currency) }));
+  statRow.appendChild(createStatCard({ label: "Today's profit", value: formatMoney(summary.today.profit, currency), tone: summary.today.profit >= 0 ? "sage" : "rust" }));
+  statRow.appendChild(createStatCard({ label: "This month's profit", value: formatMoney(summary.this_month.profit, currency), tone: summary.this_month.profit >= 0 ? "sage" : "rust", sublabel: `on ${formatMoney(summary.this_month.sales, currency)} sales` }));
+  statRow.appendChild(createStatCard({ label: "Waiter receivables", value: formatMoney(summary.total_receivable, currency), tone: summary.total_receivable > 0 ? "rust" : "sage" }));
 
-  const receivablesList = container.querySelector("#receivables-list");
-  if (!summary.waiter_receivables.length) {
-    receivablesList.innerHTML = `<div class="empty-state"><div class="empty-state-title">No active waiters yet</div></div>`;
-  } else {
-    summary.waiter_receivables
-      .slice()
-      .sort((a, b) => b.receivable - a.receivable)
-      .forEach(({ waiter, receivable }) => {
-        receivablesList.appendChild(
-          createWaiterCard({
-            waiter,
-            receivable,
-            currency,
-            onSettle: async (waiterId) => {
-              try {
-                await withErrorToast(() => api.waiters.settle(waiterId));
-                render(container);
-              } catch {
-                /* toast already shown */
-              }
-            },
-          })
-        );
-      });
-  }
+  renderTable(container.querySelector("#receivables-table"), {
+    columns: [
+      { key: "waiter", label: "Waiter", format: (r) => r.waiter.full_name },
+      { key: "receivable", label: "Receivable", numeric: true, format: (r) => formatMoney(r.receivable, currency) },
+      { key: "settle", label: "Action", format: (r) => {
+        const button = document.createElement("button");
+        button.className = "btn btn-secondary btn-sm";
+        button.textContent = "Settle";
+        button.disabled = !(r.receivable > 0);
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await withErrorToast(() => api.waiters.settle(r.waiter.id));
+            pushToast(`${r.waiter.full_name} settled.`, "success");
+            await render(container);
+          } catch {
+            button.disabled = false;
+          }
+        });
+        return button;
+      } },
+    ],
+    rows: summary.waiter_receivables.slice().sort((a, b) => b.receivable - a.receivable),
+    emptyMessage: "No active waiters yet.",
+    getRowKey: (r) => r.waiter.id,
+  });
 
   renderDonutChart(container.querySelector("#sales-mix-chart"), {
-    items: summary.sales_mix_this_month.map((m) => ({
-      label: m.item_name,
-      value: m.percentage_of_sales,
-    })),
+    items: summary.sales_mix_this_month.map((m) => ({ label: m.item_name, value: m.percentage_of_sales })),
     formatValue: (v) => `${v.toFixed(1)}%`,
     centerValue: formatMoney(summary.this_month.sales, currency),
     centerLabel: "this month",
@@ -125,25 +92,15 @@ export async function render(container) {
   });
 
   renderLineChart(container.querySelector("#revenue-profit-chart"), {
-    points: summary.revenue_profit_trend.map((d) => ({
-      date: d.date,
-      revenue: d.revenue,
-      profit: d.profit,
-    })),
+    points: summary.revenue_profit_trend.map((d) => ({ date: d.date, revenue: d.revenue, profit: d.profit })),
     formatValue: (v) => formatMoney(v, currency),
     formatDate: formatDateShort,
     emptyMessage: "No sales recorded in the last 14 days.",
   });
 
   renderVerticalBarChart(container.querySelector("#cost-revenue-chart"), {
-    groups: summary.cost_revenue_by_month.map((m) => ({
-      label: monthName(m.month).slice(0, 3),
-      values: [m.revenue, m.cost],
-    })),
-    series: [
-      { label: "Revenue", tone: "navy" },
-      { label: "Cost", tone: "rust" },
-    ],
+    groups: summary.cost_revenue_by_month.map((m) => ({ label: monthName(m.month).slice(0, 3), values: [m.revenue, m.cost] })),
+    series: [{ label: "Revenue", tone: "navy" }, { label: "Cost", tone: "rust" }],
     formatValue: (v) => formatMoney(v, currency),
     emptyMessage: "No data yet.",
   });
