@@ -7,7 +7,9 @@
 
 export function setHeaderTitle(headerEl, title) {
   const el = headerEl.querySelector("#header-title");
-  if (el) el.textContent = title || "";
+  if (!el) return;
+  el.textContent = title || "";
+  el.classList.toggle("header-natra-title", title === "NATRA");
 }
 
 /** @param {HTMLElement[]} nodes */
