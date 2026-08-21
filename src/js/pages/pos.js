@@ -43,6 +43,13 @@ export async function render(container) {
         <div class="pos-total"><span class="field-label">Total</span><span class="ticket-card-value" id="cart-total">${formatMoney(0)}</span></div>
         <button class="btn btn-primary" id="checkout-btn" style="width:100%;margin-top:var(--space-4)" disabled>Complete sale</button>
       </div>
+    </div>
+    <div class="card pos-daily-history">
+      <div class="card-header">
+        <span class="card-title">Daily sales history</span>
+        <span class="pos-history-total" id="daily-history-total"></span>
+      </div>
+      <div id="daily-sales-table"></div>
     </div>`;
 
   const currency = store.getState().settings?.currency ?? "USD";
@@ -51,6 +58,7 @@ export async function render(container) {
   const typeFilter = container.querySelector("#type-filter");
   const searchInput = container.querySelector("#item-search");
   let allItems = [];
+  let allWaiters = [];
 
   try {
     const [items, waiters] = await Promise.all([
@@ -58,6 +66,7 @@ export async function render(container) {
       withErrorToast(() => api.waiters.list(true)),
     ]);
     allItems = items;
+    allWaiters = waiters;
     waiterSelect.innerHTML = waiters.length
       ? waiters.map((w) => `<option value="${w.id}">${escapeHtml(w.full_name)}</option>`).join("")
       : `<option value="">No active waiters — add one first</option>`;
@@ -130,16 +139,62 @@ export async function render(container) {
     container.querySelector("#checkout-btn").disabled = cart.size === 0;
   }
 
+  function localDateKey(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  async function renderDailyHistory() {
+    const table = container.querySelector("#daily-sales-table");
+    try {
+      const sales = await withErrorToast(() => api.pos.listSales(null, 200));
+      const today = localDateKey();
+      const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === today);
+      const waiterById = new Map(allWaiters.map((w) => [w.id, w.full_name]));
+      const total = todaySales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+      container.querySelector("#daily-history-total").textContent = `${todaySales.length} sale${todaySales.length === 1 ? "" : "s"} · ${formatMoney(total, currency)}`;
+
+      renderTable(table, {
+        columns: [
+          { key: "created_at", label: "Time", format: (sale) => {
+            const value = String(sale.created_at || "");
+            const time = value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16);
+            return time || "—";
+          } },
+          { key: "waiter_id", label: "Waiter", format: (sale) => waiterById.get(sale.waiter_id) || `Waiter #${sale.waiter_id}` },
+          { key: "total_quantity", label: "Qty", numeric: true },
+          { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
+          { key: "total_amount", label: "Total", numeric: true, format: (sale) => formatMoney(sale.total_amount, currency) },
+          { key: "is_settled", label: "Status", format: (sale) => {
+            const badge = document.createElement("span");
+            badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`;
+            badge.textContent = sale.is_settled ? "Settled" : "Open";
+            return badge;
+          } },
+        ],
+        rows: todaySales,
+        emptyMessage: "No sales recorded today yet.",
+        getRowKey: (sale) => sale.id,
+      });
+    } catch {
+      container.querySelector("#daily-history-total").textContent = "";
+    }
+  }
+
   typeFilter.addEventListener("change", renderItemTable);
   searchInput.addEventListener("input", renderItemTable);
   renderItemTable(); renderCart();
+  await renderDailyHistory();
+
   container.querySelector("#checkout-btn").addEventListener("click", async () => {
     const waiterId = Number(waiterSelect.value);
     if (!waiterId) return pushToast("Select a waiter before completing the sale.", "error");
     const button = container.querySelector("#checkout-btn"); button.disabled=true; button.textContent="Completing…";
     try {
       const result = await api.pos.checkout({ waiter_id: waiterId, user_id: store.getState().user?.id ?? null, payment_method: container.querySelector("#payment-select").value, lines: Array.from(cart.values()).map(({item,quantity})=>({item_id:item.id,quantity})), note:null });
-      pushToast(`Sale completed — ${formatMoney(result.sale.total_amount, currency)}.`, "success"); cart=new Map(); renderItemTable(); renderCart();
+      pushToast(`Sale completed — ${formatMoney(result.sale.total_amount, currency)}.`, "success"); cart=new Map(); renderItemTable(); renderCart(); await renderDailyHistory();
     } catch (err) { pushToast(typeof err === "string" ? err : "Couldn't complete the sale.", "error"); }
     finally { button.disabled=cart.size===0; button.textContent="Complete sale"; }
   });
