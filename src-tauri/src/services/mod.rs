@@ -1,9 +1,0 @@
-pub mod auth_service;
-pub mod dashboard_service;
-pub mod financial_service;
-pub mod inventory_service;
-pub mod raw_material_service;
-pub mod report_service;
-pub mod sales_service;
-pub mod settings_service;
-pub mod waiter_service;
