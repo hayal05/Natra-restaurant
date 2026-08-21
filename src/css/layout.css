@@ -30,7 +30,10 @@
 .grid-cols-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .grid-cols-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .grid-cols-4 { grid-template-columns:repeat(4,minmax(0,1fr)); }
-.pos-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(23rem,27rem); align-items:stretch; gap:.75rem; min-height:calc(100dvh - var(--header-height) - 3rem); }
+
+/* POS workspace is viewport-sized so the Items table owns its own vertical scroll.
+   The page itself can still scroll to the full-width history below it. */
+.pos-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(23rem,27rem); align-items:stretch; gap:.75rem; height:calc(100dvh - var(--header-height) - 3rem); max-height:calc(100dvh - var(--header-height) - 3rem); min-height:32rem; }
 .pos-items-card { min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .pos-items-toolbar { flex:0 0 auto; align-items:flex-start; }
 .pos-items-hint { margin-top:.18rem; color:var(--color-ink-soft); font-size:.68rem; }
@@ -51,14 +54,14 @@
 .pos-items-table .data-table td .badge { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pos-items-table .data-table td:last-child { text-align:right; }
 .pos-items-table .data-table td:last-child .btn { max-width:100%; padding-inline:.45rem; }
-.pos-sale-panel { position:sticky; top:0; min-width:0; min-height:0; align-self:start; }
+.pos-sale-panel { position:sticky; top:0; min-width:0; min-height:0; align-self:start; overflow:hidden; }
 .pos-cart-heading { margin-top:1rem; margin-bottom:.45rem; font-size:.66rem; font-weight:750; letter-spacing:.07em; text-transform:uppercase; color:var(--color-ink-soft); }
 .pos-total { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; margin-top:.9rem; padding-top:.9rem; border-top:1px solid var(--color-border); }
 .pos-qty-controls { display:inline-flex; align-items:center; justify-content:flex-end; gap:.2rem; white-space:nowrap; }
 .pos-qty-controls .input-mono { min-width:1.5rem; text-align:center; }
 .pos-sale-panel .table-wrap { overflow-x:auto; }
-.pos-sale-panel .data-table { min-width:26rem; }
-.pos-sale-panel .data-table th,.pos-sale-panel .data-table td { padding-inline:.4rem; }
+.pos-sale-panel .data-table { min-width:0; table-layout:fixed; width:100%; }
+.pos-sale-panel .data-table th,.pos-sale-panel .data-table td { padding-inline:.3rem; }
 #item-table .table-wrap,#receivables-table .table-wrap { overflow-x:hidden; }
 #item-table .data-table,#receivables-table .data-table { min-width:0; width:100%; table-layout:fixed; }
 #item-table .data-table th,#item-table .data-table td,#receivables-table .data-table th,#receivables-table .data-table td { padding-left:.38rem; padding-right:.38rem; }
@@ -74,9 +77,23 @@
 #receivables-table .data-table th:nth-child(1),#receivables-table .data-table td:nth-child(1) { width:47%; }
 #receivables-table .data-table th:nth-child(2),#receivables-table .data-table td:nth-child(2) { width:28%; }
 #receivables-table .data-table th:nth-child(3),#receivables-table .data-table td:nth-child(3) { width:25%; }
+
+.pos-daily-history { width:100%; min-width:0; }
+.pos-daily-history .card-header { align-items:center; }
+.pos-history-total { margin-left:auto; color:var(--color-ink-soft); font-size:.72rem; font-weight:650; white-space:nowrap; }
+.pos-daily-history .table-wrap { max-height:26rem; overflow:auto; }
+.pos-daily-history .data-table { min-width:0; width:100%; table-layout:fixed; }
+.pos-daily-history .data-table th,.pos-daily-history .data-table td { padding-top:.48rem; padding-bottom:.48rem; }
+.pos-daily-history .data-table th:nth-child(1),.pos-daily-history .data-table td:nth-child(1) { width:12%; }
+.pos-daily-history .data-table th:nth-child(2),.pos-daily-history .data-table td:nth-child(2) { width:28%; }
+.pos-daily-history .data-table th:nth-child(3),.pos-daily-history .data-table td:nth-child(3) { width:10%; }
+.pos-daily-history .data-table th:nth-child(4),.pos-daily-history .data-table td:nth-child(4) { width:16%; }
+.pos-daily-history .data-table th:nth-child(5),.pos-daily-history .data-table td:nth-child(5) { width:18%; }
+.pos-daily-history .data-table th:nth-child(6),.pos-daily-history .data-table td:nth-child(6) { width:16%; }
+
 .screen-centered { min-height:100dvh; width:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#edf3f9 0%,#f8fafc 55%,#e6eef6 100%); padding:1.5rem; }
 @media (max-width:1100px) { .pos-layout { grid-template-columns:minmax(0,1fr) minmax(21rem,24rem); } .pos-search { min-width:12rem; } }
 @media (max-width:1024px) { .app-shell { grid-template-columns:var(--sidebar-width-collapsed) minmax(0,1fr); } .sidebar-brand-name,.sidebar-section-label,.nav-item-label { display:none; } .sidebar-brand { justify-content:center; padding:0; } .sidebar-brand img,.sidebar-brand svg { width:5.7rem; max-width:75%; } .sidebar-nav { padding-inline:.55rem; } .sidebar-footer { padding-inline:.5rem; } }
-@media (max-width:820px) { .pos-layout { grid-template-columns:1fr; min-height:0; align-items:start; } .pos-items-card { min-height:32rem; } .pos-items-table { min-height:20rem; } .pos-sale-panel { position:static; } }
-@media (max-width:720px) { .grid-cols-3,.grid-cols-4 { grid-template-columns:repeat(2,minmax(0,1fr)); } .content { padding:.9rem; } .header { padding:0 .9rem; } .pos-items-toolbar { flex-direction:column; } .pos-item-filters { width:100%; } .pos-search { flex:1; min-width:0; } .pos-item-filters .select { max-width:8.5rem; } #item-table .data-table,#receivables-table .data-table { font-size:.7rem; } #item-table .data-table th,#item-table .data-table td,#receivables-table .data-table th,#receivables-table .data-table td { padding-left:.28rem; padding-right:.28rem; } #item-table .data-table td:last-child .btn,#receivables-table .data-table td:last-child .btn { padding-inline:.38rem; } }
-@media (max-width:480px) { .grid-cols-2,.grid-cols-3,.grid-cols-4 { grid-template-columns:1fr; } }
+@media (max-width:820px) { .pos-layout { grid-template-columns:1fr; height:auto; max-height:none; min-height:0; align-items:start; } .pos-items-card { min-height:32rem; height:32rem; } .pos-items-table { min-height:20rem; } .pos-sale-panel { position:static; overflow:visible; } }
+@media (max-width:720px) { .grid-cols-3,.grid-cols-4 { grid-template-columns:repeat(2,minmax(0,1fr)); } .content { padding:.9rem; } .header { padding:0 .9rem; } .pos-items-toolbar { flex-direction:column; } .pos-item-filters { width:100%; } .pos-search { flex:1; min-width:0; } .pos-item-filters .select { max-width:8.5rem; } #item-table .data-table,#receivables-table .data-table { font-size:.7rem; } #item-table .data-table th,#item-table .data-table td,#receivables-table .data-table th,#receivables-table .data-table td { padding-left:.28rem; padding-right:.28rem; } #item-table .data-table td:last-child .btn,#receivables-table .data-table td:last-child .btn { padding-inline:.38rem; } .pos-history-total { font-size:.66rem; } }
+@media (max-width:480px) { .grid-cols-2,.grid-cols-3,.grid-cols-4 { grid-template-columns:1fr; } .pos-daily-history .data-table { min-width:38rem; } }
