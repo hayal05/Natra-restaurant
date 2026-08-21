@@ -1,142 +1,22 @@
-/* Form fields. Buttons live in components.css — this file is just the
-   input/label/error vocabulary used across auth screens and every
-   create/edit form in the app. */
+.field { display:flex; flex-direction:column; gap:.4rem; }
+.field + .field { margin-top:1rem; }
+.field-label { font-size:.78rem; font-weight:700; color:#334155; }
+.field-hint { font-size:.72rem; color:#64748b; }
+.field-error { font-size:.72rem; color:#d04444; min-height:1em; }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+.input, .select, .textarea {
+  width:100%; height:2.75rem; padding:0 .85rem; border:1px solid #d7e0ea; border-radius:10px;
+  background:#fff; color:#102033; font-size:.88rem; transition:all var(--dur-fast) var(--ease-standard);
 }
+.textarea { height:auto; min-height:5rem; padding:.7rem .85rem; resize:vertical; }
+.input:hover, .select:hover, .textarea:hover { border-color:#b8c7d8; }
+.input:focus, .select:focus, .textarea:focus { outline:none; border-color:#4c83b9; box-shadow:0 0 0 4px rgba(76,131,185,.12); }
+.input.has-error, .select.has-error, .textarea.has-error { border-color:#d04444; }
+.input.has-error:focus, .select.has-error:focus { box-shadow:0 0 0 4px rgba(208,68,68,.1); }
+.input::placeholder, .textarea::placeholder { color:#a1aec0; }
+.input-mono { font-family:var(--font-mono); }
+.checkbox-row { display:flex; align-items:center; gap:.5rem; }
+.checkbox-row input[type="checkbox"] { width:1.05rem; height:1.05rem; accent-color:#173b67; }
+.form-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1.25rem; }
 
-.field + .field {
-  margin-top: var(--space-4);
-}
-
-.field-label {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-ink);
-}
-
-.field-hint {
-  font-size: var(--text-xs);
-  color: var(--color-ink-soft);
-}
-
-.field-error {
-  font-size: var(--text-xs);
-  color: var(--color-rust);
-}
-
-.input,
-.select,
-.textarea {
-  height: 2.5rem;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-ink);
-  font-size: var(--text-base);
-  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
-}
-
-.textarea {
-  height: auto;
-  min-height: 5rem;
-  padding: var(--space-2) var(--space-3);
-  resize: vertical;
-}
-
-.input:hover,
-.select:hover,
-.textarea:hover {
-  border-color: var(--color-ink-faint);
-}
-
-.input:focus,
-.select:focus,
-.textarea:focus {
-  outline: none;
-  border-color: var(--color-navy);
-  box-shadow: 0 0 0 3px var(--color-navy-light);
-}
-
-.input.has-error,
-.select.has-error,
-.textarea.has-error {
-  border-color: var(--color-rust);
-}
-
-.input.has-error:focus,
-.select.has-error:focus {
-  box-shadow: 0 0 0 3px var(--color-rust-light);
-}
-
-.input::placeholder,
-.textarea::placeholder {
-  color: var(--color-ink-faint);
-}
-
-.input-mono {
-  font-family: var(--font-mono);
-}
-
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.checkbox-row input[type="checkbox"] {
-  width: 1.125rem;
-  height: 1.125rem;
-  accent-color: var(--color-navy);
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-5);
-}
-
-/* ---- auth cards (login / first-run setup) ---- */
-
-.auth-card {
-  width: 100%;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: var(--space-7) var(--space-6);
-  box-shadow: var(--shadow-md);
-}
-
-.auth-card-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-6);
-}
-
-.auth-card-brand img {
-  width: 2.25rem;
-  height: 2.25rem;
-}
-
-.auth-card-heading {
-  font-family: var(--font-display);
-  font-size: var(--text-lg);
-  margin-bottom: var(--space-1);
-}
-
-.auth-card-subheading {
-  font-size: var(--text-sm);
-  color: var(--color-ink-soft);
-  margin-bottom: var(--space-5);
-}
-
-.auth-card .btn {
-  width: 100%;
-  margin-top: var(--space-2);
-}
+.auth-card .btn { width:100%; margin-top:.75rem; }
