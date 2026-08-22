@@ -63,15 +63,14 @@
 .items-pane-wide .data-table th:nth-child(3),.items-pane-wide .data-table td:nth-child(3) { width:15%; }
 .items-pane-wide .data-table th:nth-child(4),.items-pane-wide .data-table td:nth-child(4) { width:16%; }
 .items-pane-wide .data-table th:nth-child(5),.items-pane-wide .data-table td:nth-child(5) { width:17%; }
-.items-pane-wide .data-table th:nth-child(6),.items-pane-wide .data-table td:nth-child(6) { width:19%; }
-.items-pane-wide .data-table th:nth-child(7),.items-pane-wide .data-table td:nth-child(7) { width:auto; }
-/* Margin is intentionally removed from the visible Menu items table. */
-.items-pane-wide .data-table th:nth-child(6),.items-pane-wide .data-table td:nth-child(6) { width:9%; }
+/* Hide Margin while preserving the existing data/rendering logic. */
+.items-pane-wide .data-table th:nth-child(6),.items-pane-wide .data-table td:nth-child(6) { display:none; }
 .items-pane-wide .data-table th:nth-child(7),.items-pane-wide .data-table td:nth-child(7) { width:8%; }
-.items-pane-wide .data-table th:nth-child(8),.items-pane-wide .data-table td:nth-child(8) { width:10%; }
+.items-pane-wide .data-table th:nth-child(8),.items-pane-wide .data-table td:nth-child(8) { width:11%; }
+/* Hide Category Description to keep the categories pane compact. */
 .items-pane-narrow .data-table th:nth-child(1),.items-pane-narrow .data-table td:nth-child(1) { width:65%; }
-.items-pane-narrow .data-table th:nth-child(2),.items-pane-narrow .data-table td:nth-child(2) { width:35%; }
-/* Category Description is intentionally removed from the visible Categories table. */
+.items-pane-narrow .data-table th:nth-child(2),.items-pane-narrow .data-table td:nth-child(2) { display:none; }
+.items-pane-narrow .data-table th:nth-child(3),.items-pane-narrow .data-table td:nth-child(3) { width:35%; }
 .items-pane-scroll .data-table td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .items-pane-scroll .data-table td .row-actions { overflow:hidden; }
 .items-pane-scroll .data-table td .btn { max-width:100%; overflow:hidden; text-overflow:ellipsis; }
