@@ -2,7 +2,7 @@ import * as api from "./api.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
 import { renderNavItems, setActiveNavItem } from "./components/sidebar.js";
-import { setHeaderTitle } from "./components/header.js";
+import { setHeaderTitle, clearHeaderActions } from "./components/header.js";
 import { mountToastStack } from "./components/notification.js";
 
 const appRoot = document.getElementById("app");
@@ -57,7 +57,31 @@ async function bootstrap(){
   const actionObserver = new MutationObserver(() => promotePageActions(appOutlet, shell));
   actionObserver.observe(appOutlet, { childList: true, subtree: true });
 
-  initRouter((def)=>{if(def.public){shell.style.display="none";publicScreen.style.display="flex";return publicOutlet}publicScreen.style.display="none";shell.style.display="grid";return appOutlet},{onNavigate:({path,title})=>{setActiveNavItem(shell.querySelector("#sidebar-nav"),path);setHeaderTitle(shell,title);const userLabel=shell.querySelector("#current-user-label");const {user}=store.getState();if(userLabel)userLabel.textContent=user?user.full_name:"";}});
+  initRouter((def)=>{
+    if(def.public){
+      clearHeaderActions(shell);
+      shell.style.display="none";
+      publicScreen.style.display="flex";
+      return publicOutlet;
+    }
+
+    // Header actions belong exclusively to the page being entered. Because
+    // page buttons are promoted (moved) into this shared header, they would
+    // otherwise survive navigation and appear on unrelated pages. Clear them
+    // before the new page starts rendering, not only after navigation ends.
+    clearHeaderActions(shell);
+    setHeaderTitle(shell, def.title ?? "");
+
+    publicScreen.style.display="none";
+    shell.style.display="grid";
+    return appOutlet;
+  },{onNavigate:({path,title})=>{
+    setActiveNavItem(shell.querySelector("#sidebar-nav"),path);
+    setHeaderTitle(shell,title);
+    const userLabel=shell.querySelector("#current-user-label");
+    const {user}=store.getState();
+    if(userLabel)userLabel.textContent=user?user.full_name:"";
+  }});
   store.subscribe(({settings})=>{if(settings)document.title=`${settings.restaurant_name} — NATRA`});
   let initialized=false;try{initialized=await api.auth.isInitialized()}catch(err){pushToast(typeof err==="string"?err:"Couldn't reach the local database.","error",0)}
   if(!initialized){navigate("/setup");return} navigate("/login");
