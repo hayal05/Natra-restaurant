@@ -21,17 +21,25 @@ pub fn create_expense(conn: &Connection, category: &str, description: Option<&st
 }
 
 pub fn list_expenses(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<Expense>> {
-    let rows = match (from, to) {
+    // Keep the prepared statement alive for the whole query_map/collect operation.
+    // Returning from each match arm avoids borrowing the statement across the
+    // outer match expression on newer Rust/rusqlite combinations.
+    match (from, to) {
         (Some(f), Some(t)) => {
             let mut stmt = conn.prepare("SELECT * FROM expenses WHERE expense_date BETWEEN ?1 AND ?2 ORDER BY expense_date DESC")?;
-            stmt.query_map([f, t], Expense::from_row)?.collect::<Result<Vec<_>, _>>()?
+            let rows = stmt
+                .query_map(rusqlite::params![f, t], Expense::from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
         }
         _ => {
             let mut stmt = conn.prepare("SELECT * FROM expenses ORDER BY expense_date DESC")?;
-            stmt.query_map([], Expense::from_row)?.collect::<Result<Vec<_>, _>>()?
+            let rows = stmt
+                .query_map([], Expense::from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
         }
-    };
-    Ok(rows)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
