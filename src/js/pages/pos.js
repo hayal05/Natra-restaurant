@@ -66,6 +66,7 @@ export async function render(container) {
   const categoryName = (item) => item.category_name || item.category || item.categoryName || "-";
   const itemType = (item) => item.type || item.item_type || item.itemType || "";
   const itemPrice = (item) => Number(item.selling_price ?? item.sellingPrice ?? 0);
+  const lineTotal = (line) => itemPrice(line.item) * line.quantity;
 
   function renderItemTable() {
     const filterType = typeFilter.value;
@@ -75,7 +76,6 @@ export async function render(container) {
       if (!query) return true;
       return [item.name, categoryName(item), itemPrice(item)].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
     });
-
     renderTable(itemTable, {
       columns: [
         { key: "name", label: "Item" },
@@ -100,50 +100,92 @@ export async function render(container) {
     });
   }
 
-  const lineTotal = (line) => itemPrice(line.item) * line.quantity;
-
   function renderCart() {
     const rows = Array.from(cart.values());
     const totalQuantity = rows.reduce((sum, line) => sum + line.quantity, 0);
     const saleTotal = rows.reduce((sum, line) => sum + lineTotal(line), 0);
+
     container.querySelector("#cart-count").textContent = `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`;
     container.querySelector("#cart-total").textContent = formatMoney(saleTotal, currency);
     container.querySelector("#checkout-btn").disabled = rows.length === 0;
 
-    renderTable(cartLines, {
-      columns: [
-        { key: "item", label: "Item", format: (line) => { const el = document.createElement("strong"); el.textContent = line.item.name || "Unnamed item"; return el; } },
-        { key: "price", label: "Price", numeric: true, format: (line) => formatMoney(itemPrice(line.item), currency) },
-        { key: "quantity", label: "Qty", numeric: true, format: (line) => {
-          const wrap = document.createElement("div");
-          wrap.className = "pos-qty-controls";
-          const dec = document.createElement("button");
-          dec.type = "button"; dec.className = "btn btn-ghost btn-sm"; dec.textContent = "-"; dec.title = "Decrease quantity";
-          dec.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); changeQuantity(line.item, -1); });
-          const input = document.createElement("input");
-          input.type = "number"; input.min = "1"; input.step = "1"; input.value = String(line.quantity); input.className = "input input-mono pos-qty-input";
-          input.addEventListener("change", () => setQuantity(line.item, input.value));
-          input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); input.blur(); } });
-          const inc = document.createElement("button");
-          inc.type = "button"; inc.className = "btn btn-ghost btn-sm"; inc.textContent = "+"; inc.title = "Increase quantity";
-          inc.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); changeQuantity(line.item, 1); });
-          wrap.append(dec, input, inc);
-          return wrap;
-        }},
-        { key: "total", label: "Line total", numeric: true, format: (line) => formatMoney(lineTotal(line), currency) },
-      ],
-      rows,
-      emptyMessage: "No items yet - click Add beside an item.",
-      getRowKey: (line) => itemId(line.item),
+    // Render the current sale directly. Do not rely on the generic table
+    // renderer here: the cart is interactive state and must stay synchronized.
+    cartLines.innerHTML = "";
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "table-empty";
+      empty.textContent = "No items yet - click Add beside an item.";
+      cartLines.appendChild(empty);
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "data-table";
+    table.innerHTML = `<thead><tr><th>Item</th><th class="col-numeric">Price</th><th class="col-numeric">Qty</th><th class="col-numeric">Line total</th></tr></thead>`;
+    const tbody = document.createElement("tbody");
+
+    rows.forEach((line) => {
+      const tr = document.createElement("tr");
+      const itemCell = document.createElement("td");
+      const itemName = document.createElement("strong");
+      itemName.textContent = line.item.name || "Unnamed item";
+      itemCell.appendChild(itemName);
+
+      const priceCell = document.createElement("td");
+      priceCell.className = "col-numeric";
+      priceCell.textContent = formatMoney(itemPrice(line.item), currency);
+
+      const qtyCell = document.createElement("td");
+      qtyCell.className = "col-numeric";
+      const controls = document.createElement("div");
+      controls.className = "pos-qty-controls";
+
+      const dec = document.createElement("button");
+      dec.type = "button";
+      dec.className = "btn btn-ghost btn-sm";
+      dec.textContent = "-";
+      dec.addEventListener("click", () => changeQuantity(line.item, -1));
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.step = "1";
+      input.value = String(line.quantity);
+      input.className = "input input-mono pos-qty-input";
+      input.addEventListener("change", () => setQuantity(line.item, input.value));
+
+      const inc = document.createElement("button");
+      inc.type = "button";
+      inc.className = "btn btn-ghost btn-sm";
+      inc.textContent = "+";
+      inc.addEventListener("click", () => changeQuantity(line.item, 1));
+
+      controls.append(dec, input, inc);
+      qtyCell.appendChild(controls);
+
+      const totalCell = document.createElement("td");
+      totalCell.className = "col-numeric";
+      totalCell.textContent = formatMoney(lineTotal(line), currency);
+
+      tr.append(itemCell, priceCell, qtyCell, totalCell);
+      tbody.appendChild(tr);
     });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    cartLines.appendChild(wrap);
   }
 
   function addToCart(item) {
     const id = itemId(item);
     const current = cart.get(id);
-    cart.set(id, { item, quantity: (current?.quantity || 0) + 1 });
-    renderItemTable();
+    const quantity = (current?.quantity || 0) + 1;
+    cart.set(id, { item, quantity });
     renderCart();
+    renderItemTable();
   }
 
   function setQuantity(item, quantity) {
@@ -153,8 +195,8 @@ export async function render(container) {
     const next = Math.floor(Number(quantity));
     if (!Number.isFinite(next) || next <= 0) cart.delete(id);
     else cart.set(id, { ...line, quantity: next });
-    renderItemTable();
     renderCart();
+    renderItemTable();
   }
 
   function changeQuantity(item, delta) {
