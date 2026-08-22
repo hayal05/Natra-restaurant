@@ -1,6 +1,5 @@
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
-import { setHeaderActions } from "../components/header.js";
 import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
@@ -22,26 +21,26 @@ export async function render(container) {
     </div>
     <div class="items-workspace">
       <section class="card items-pane items-pane-wide">
-        <div class="card-header"><span class="card-title">Menu items</span><span class="items-pane-hint">Scrollable</span></div>
+        <div class="card-header">
+          <span class="card-title">Menu items</span>
+          <button class="btn btn-primary btn-sm" id="add-item-btn" type="button">Add item</button>
+        </div>
         <div class="items-pane-scroll" id="item-table"></div>
       </section>
       <section class="card items-pane items-pane-narrow">
-        <div class="card-header"><span class="card-title">Categories</span><span class="items-pane-hint">Scrollable</span></div>
+        <div class="card-header">
+          <span class="card-title">Categories</span>
+          <button class="btn btn-secondary btn-sm" id="add-category-btn" type="button">Add category</button>
+        </div>
         <div class="items-pane-scroll" id="category-table"></div>
       </section>
     </div>`;
 
   let categories = await loadCategories(container);
-  const addItem = () => openItemModal(container, categories);
-  const addCategory = () => openCategoryModal(container);
-  const manageCategories = () => container.querySelector("#category-table")?.scrollTo({ top: 0, behavior: "smooth" });
+  container.querySelector("#add-item-btn").addEventListener("click", () => openItemModal(container, categories));
+  container.querySelector("#add-category-btn").addEventListener("click", () => openCategoryModal(container));
   container.querySelector("#type-filter").addEventListener("change", () => loadItems(container, categories));
   container.querySelector("#show-inactive").addEventListener("change", () => loadItems(container, categories));
-
-  const addItemBtn = document.createElement("button"); addItemBtn.className = "btn btn-primary"; addItemBtn.textContent = "Add item"; addItemBtn.addEventListener("click", addItem);
-  const addCategoryBtn = document.createElement("button"); addCategoryBtn.className = "btn btn-secondary"; addCategoryBtn.textContent = "Add category"; addCategoryBtn.addEventListener("click", addCategory);
-  const manageBtn = document.createElement("button"); manageBtn.className = "btn btn-secondary"; manageBtn.textContent = "Manage categories"; manageBtn.addEventListener("click", manageCategories);
-  setHeaderActions(document, [addCategoryBtn, manageBtn, addItemBtn]);
   await loadItems(container, categories);
 }
 
