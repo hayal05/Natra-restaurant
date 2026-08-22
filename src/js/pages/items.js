@@ -8,6 +8,8 @@ import { firstError, isNonEmpty, isNonNegativeNumber } from "../utils/validation
 export const title = "Items";
 let itemCache = new Map();
 
+const NAVY_BUTTON_STYLE = "background:#0b2a4a;color:#fff;border-color:#0b2a4a;";
+
 export async function render(container) {
   container.innerHTML = `
     <div class="items-toolbar">
@@ -23,14 +25,14 @@ export async function render(container) {
       <section class="card items-pane items-pane-wide">
         <div class="card-header">
           <span class="card-title">Menu items</span>
-          <button class="btn btn-primary btn-sm" id="add-item-btn" type="button">Add item</button>
+          <button class="btn btn-sm" style="${NAVY_BUTTON_STYLE}" id="add-item-btn" data-no-header-promotion="true" type="button">Add item</button>
         </div>
         <div class="items-pane-scroll" id="item-table"></div>
       </section>
       <section class="card items-pane items-pane-narrow">
         <div class="card-header">
           <span class="card-title">Categories</span>
-          <button class="btn btn-secondary btn-sm" id="add-category-btn" type="button">Add category</button>
+          <button class="btn btn-sm" style="${NAVY_BUTTON_STYLE}" id="add-category-btn" data-no-header-promotion="true" type="button">Add category</button>
         </div>
         <div class="items-pane-scroll" id="category-table"></div>
       </section>
