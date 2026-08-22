@@ -36,8 +36,8 @@ export const rawMaterials = {
 
 export const expenses = {
   create: (category, description, amount, expenseDate, note) => invoke("create_expense", { category, description: description ?? null, amount, expenseDate: expenseDate ?? null, note: note ?? null }),
-  list: (from, to) => invoke("list_expenses", { from, to }),
-  calculateProfit: (from, to) => invoke("calculate_profit", { from, to }),
+  list: (from, to) => invoke("list_expenses", { from: from ?? null, to: to ?? null }),
+  calculateProfit: (from, to) => invoke("calculate_profit", { from: from ?? null, to: to ?? null }),
 };
 
 export const pos = {
