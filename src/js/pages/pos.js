@@ -1,7 +1,6 @@
 /**
- * Point of sale. Items are added to a local cart immediately, quantities can
- * be adjusted before checkout, and the sale total is recalculated after every
- * cart change.
+ * Point of sale. Items are staged in a client-side Current sale cart only.
+ * Nothing is recorded as a sale until Complete sale is pressed.
  */
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
@@ -32,7 +31,8 @@ export async function render(container) {
         <div class="card-header"><span class="card-title">Current sale</span><span id="cart-count" class="pos-cart-count">0 items</span></div>
         <div class="field"><label class="field-label" for="waiter-select">Waiter</label><select class="select" id="waiter-select"></select></div>
         <div class="field"><label class="field-label" for="payment-select">Payment method</label><select class="select" id="payment-select"><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></div>
-        <div class="pos-cart-heading">Selected items</div><div id="cart-lines"></div>
+        <div class="pos-cart-heading">Selected items</div>
+        <div id="cart-lines"></div>
         <div class="pos-total"><span class="field-label">Total</span><span class="ticket-card-value" id="cart-total">${formatMoney(0)}</span></div>
         <button class="btn btn-primary" id="checkout-btn" style="width:100%;margin-top:var(--space-4)" disabled>Complete sale</button>
       </div>
@@ -41,10 +41,10 @@ export async function render(container) {
 
   const currency = store.getState().settings?.currency ?? "USD";
   const itemTable = container.querySelector("#item-table");
+  const cartLines = container.querySelector("#cart-lines");
   const waiterSelect = container.querySelector("#waiter-select");
   const typeFilter = container.querySelector("#type-filter");
   const searchInput = container.querySelector("#item-search");
-  const cartLines = container.querySelector("#cart-lines");
   let allItems = [];
   let allWaiters = [];
 
@@ -55,12 +55,15 @@ export async function render(container) {
     ]);
     allItems = Array.isArray(items) ? items : [];
     allWaiters = Array.isArray(waiters) ? waiters : [];
-    waiterSelect.innerHTML = allWaiters.length ? allWaiters.map((w) => `<option value="${w.id}">${escapeHtml(w.full_name)}</option>`).join("") : `<option value="">No active waiters — add one first</option>`;
+    waiterSelect.innerHTML = allWaiters.length
+      ? allWaiters.map((w) => `<option value="${w.id}">${escapeHtml(w.full_name)}</option>`).join("")
+      : `<option value="">No active waiters — add one first</option>`;
   } catch { return; }
 
   const itemId = (item) => String(item.id);
   const categoryName = (item) => item.category_name || item.category || item.categoryName || "—";
   const itemType = (item) => item.type || item.item_type || item.itemType || "";
+  const itemPrice = (item) => Number(item.selling_price ?? item.sellingPrice ?? 0);
 
   function renderItemTable() {
     const filterType = typeFilter.value;
@@ -68,17 +71,19 @@ export async function render(container) {
     const filtered = allItems.filter((item) => {
       if (filterType && itemType(item) !== filterType) return false;
       if (!query) return true;
-      return [item.name, categoryName(item), item.selling_price].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
+      return [item.name, categoryName(item), itemPrice(item)].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
     });
+
     renderTable(itemTable, {
       columns: [
         { key: "name", label: "Item" },
         { key: "category", label: "Category", format: (item) => categoryName(item) },
-        { key: "selling_price", label: "Unit price", numeric: true, format: (item) => formatMoney(Number(item.selling_price || 0), currency) },
+        { key: "selling_price", label: "Unit price", numeric: true, format: (item) => formatMoney(itemPrice(item), currency) },
         { key: "action", label: "Action", format: (item) => {
           const button = document.createElement("button");
           button.className = "btn btn-primary btn-sm";
           button.type = "button";
+          button.dataset.posAction = "add";
           button.dataset.cartItemId = itemId(item);
           const quantity = cart.get(itemId(item))?.quantity || 0;
           button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
@@ -91,30 +96,45 @@ export async function render(container) {
     });
   }
 
+  function calculateLineTotal(line) {
+    return itemPrice(line.item) * line.quantity;
+  }
+
   function renderCart() {
     const rows = Array.from(cart.values());
     const totalQuantity = rows.reduce((sum, line) => sum + line.quantity, 0);
-    const total = rows.reduce((sum, line) => sum + Number(line.item.selling_price || 0) * line.quantity, 0);
+    const saleTotal = rows.reduce((sum, line) => sum + calculateLineTotal(line), 0);
+
     container.querySelector("#cart-count").textContent = `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`;
+    container.querySelector("#cart-total").textContent = formatMoney(saleTotal, currency);
+    container.querySelector("#checkout-btn").disabled = rows.length === 0;
+
     renderTable(cartLines, {
       columns: [
-        { key: "item", label: "Item", format: (line) => { const d = document.createElement("strong"); d.textContent = line.item.name || "Unnamed item"; return d; } },
-        { key: "price", label: "Price", numeric: true, format: (line) => formatMoney(Number(line.item.selling_price || 0), currency) },
+        { key: "item", label: "Item", format: (line) => { const el = document.createElement("strong"); el.textContent = line.item.name || "Unnamed item"; return el; } },
+        { key: "price", label: "Price", numeric: true, format: (line) => formatMoney(itemPrice(line.item), currency) },
         { key: "quantity", label: "Qty", numeric: true, format: (line) => {
-          const d = document.createElement("div"); d.className = "pos-qty-controls";
-          const dec = document.createElement("button"); dec.className = "btn btn-ghost btn-sm"; dec.type = "button"; dec.dataset.cartAction = "decrease"; dec.dataset.cartItemId = itemId(line.item); dec.textContent = "−"; dec.title = "Decrease quantity";
-          const q = document.createElement("span"); q.className = "input-mono"; q.textContent = String(line.quantity);
-          const inc = document.createElement("button"); inc.className = "btn btn-ghost btn-sm"; inc.type = "button"; inc.dataset.cartAction = "increase"; inc.dataset.cartItemId = itemId(line.item); inc.textContent = "+"; inc.title = "Increase quantity";
-          d.append(dec, q, inc); return d;
+          const wrap = document.createElement("div");
+          wrap.className = "pos-qty-controls";
+          const dec = document.createElement("button");
+          dec.type = "button"; dec.className = "btn btn-ghost btn-sm";
+          dec.dataset.posAction = "decrease"; dec.dataset.cartItemId = itemId(line.item); dec.textContent = "−";
+          const input = document.createElement("input");
+          input.type = "number"; input.min = "1"; input.step = "1"; input.value = String(line.quantity);
+          input.className = "input input-mono pos-qty-input";
+          input.dataset.posAction = "quantity"; input.dataset.cartItemId = itemId(line.item);
+          const inc = document.createElement("button");
+          inc.type = "button"; inc.className = "btn btn-ghost btn-sm";
+          inc.dataset.posAction = "increase"; inc.dataset.cartItemId = itemId(line.item); inc.textContent = "+";
+          wrap.append(dec, input, inc);
+          return wrap;
         }},
-        { key: "total", label: "Total", numeric: true, format: (line) => formatMoney(Number(line.item.selling_price || 0) * line.quantity, currency) },
+        { key: "total", label: "Line total", numeric: true, format: (line) => formatMoney(calculateLineTotal(line), currency) },
       ],
       rows,
       emptyMessage: "No items yet — click Add beside an item.",
       getRowKey: (line) => itemId(line.item),
     });
-    container.querySelector("#cart-total").textContent = formatMoney(total, currency);
-    container.querySelector("#checkout-btn").disabled = cart.size === 0;
   }
 
   function addToCart(item) {
@@ -125,34 +145,62 @@ export async function render(container) {
     renderCart();
   }
 
-  function changeQuantity(id, delta) {
+  function setQuantity(id, quantity) {
     const key = String(id);
     const line = cart.get(key);
     if (!line) return;
-    const next = line.quantity + delta;
-    if (next <= 0) cart.delete(key); else cart.set(key, { ...line, quantity: next });
+    const next = Math.floor(Number(quantity));
+    if (!Number.isFinite(next) || next <= 0) cart.delete(key);
+    else cart.set(key, { ...line, quantity: next });
     renderItemTable();
     renderCart();
   }
 
-  itemTable.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-cart-item-id]");
-    if (!button || !itemTable.contains(button)) return;
+  function changeQuantity(id, delta) {
+    const key = String(id);
+    const line = cart.get(key);
+    if (!line) return;
+    setQuantity(key, line.quantity + delta);
+  }
+
+  // Use one delegated handler on the stable POS container. The table itself is
+  // re-rendered after every cart change, so handlers must not be attached to
+  // individual table rows/buttons.
+  container.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-pos-action][data-cart-item-id]");
+    if (!button || !container.contains(button)) return;
+    const action = button.dataset.posAction;
+    const id = button.dataset.cartItemId;
     event.preventDefault();
-    event.stopPropagation();
-    const item = allItems.find((candidate) => itemId(candidate) === String(button.dataset.cartItemId));
-    if (item) addToCart(item);
+    if (action === "add") {
+      const item = allItems.find((candidate) => itemId(candidate) === id);
+      if (item) addToCart(item);
+    } else if (action === "increase") {
+      changeQuantity(id, 1);
+    } else if (action === "decrease") {
+      changeQuantity(id, -1);
+    }
   });
 
-  cartLines.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-cart-action][data-cart-item-id]");
-    if (!button || !cartLines.contains(button)) return;
+  container.addEventListener("change", (event) => {
+    const input = event.target.closest("input[data-pos-action="quantity"]");
+    if (!input) return;
     event.preventDefault();
-    event.stopPropagation();
-    changeQuantity(button.dataset.cartItemId, button.dataset.cartAction === "increase" ? 1 : -1);
+    setQuantity(input.dataset.cartItemId, input.value);
   });
 
-  function localDateKey(date = new Date()) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0"); return `${y}-${m}-${d}`; }
+  container.addEventListener("keydown", (event) => {
+    if (event.target.matches("input[data-pos-action=quantity]") && event.key === "Enter") {
+      event.preventDefault();
+      event.target.blur();
+    }
+  });
+
+  function localDateKey(date = new Date()) {
+    const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
   async function renderDailyHistory() {
     const table = container.querySelector("#daily-sales-table");
     try {
@@ -184,13 +232,47 @@ export async function render(container) {
     const waiterId = Number(waiterSelect.value);
     if (!waiterId) return pushToast("Select a waiter before completing the sale.", "error");
     if (!cart.size) return pushToast("Add at least one item before completing the sale.", "error");
-    const button = container.querySelector("#checkout-btn"); button.disabled = true; button.textContent = "Completing…";
+
+    const lines = Array.from(cart.values()).map(({ item, quantity }) => ({
+      item_id: item.id,
+      quantity: Math.floor(quantity),
+    })).filter((line) => line.quantity > 0);
+    if (!lines.length) return pushToast("Add at least one item before completing the sale.", "error");
+
+    const button = container.querySelector("#checkout-btn");
+    button.disabled = true;
+    button.textContent = "Completing…";
     try {
-      const result = await api.pos.checkout({ waiter_id: waiterId, user_id: store.getState().user?.id ?? null, payment_method: container.querySelector("#payment-select").value, lines: Array.from(cart.values()).map(({ item, quantity }) => ({ item_id: item.id, quantity })), note: null });
-      pushToast(`Sale completed — ${formatMoney(result.sale.total_amount, currency)}.`, "success");
-      cart = new Map(); renderItemTable(); renderCart(); await renderDailyHistory();
-    } catch (err) { pushToast(typeof err === "string" ? err : "Couldn't complete the sale.", "error"); }
-    finally { button.disabled = cart.size === 0; button.textContent = "Complete sale"; }
+      // This is the ONLY place that calls the backend checkout command.
+      // Adding/changing cart items never creates a sale.
+      const result = await api.pos.checkout({
+        waiter_id: waiterId,
+        user_id: store.getState().user?.id ?? null,
+        payment_method: container.querySelector("#payment-select").value,
+        lines,
+        note: null,
+      });
+      const completedTotal = Number(result?.sale?.total_amount ?? lines.reduce((sum, line) => {
+        const item = allItems.find((candidate) => itemId(candidate) === String(line.item_id));
+        return sum + itemPrice(item || {}) * line.quantity;
+      }, 0));
+      pushToast(`Sale completed — ${formatMoney(completedTotal, currency)}.`, "success");
+      cart = new Map();
+      renderItemTable();
+      renderCart();
+      await renderDailyHistory();
+    } catch (err) {
+      pushToast(typeof err === "string" ? err : (err?.message || "Couldn't complete the sale."), "error");
+      renderCart();
+    } finally {
+      button.textContent = "Complete sale";
+      button.disabled = cart.size === 0;
+    }
   });
 }
-function escapeHtml(text) { const div = document.createElement("div"); div.textContent = text ?? ""; return div.innerHTML; }
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text ?? "";
+  return div.innerHTML;
+}
