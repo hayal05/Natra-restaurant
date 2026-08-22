@@ -30,6 +30,27 @@
   -webkit-overflow-scrolling: touch;
 }
 
+#receivables-table .data-table {
+  min-width: 0;
+  width: 100%;
+}
+
+#receivables-table .data-table th,
+#receivables-table .data-table td {
+  padding-left: .4rem;
+  padding-right: .4rem;
+}
+
+#receivables-table .waiter-identity {
+  gap: .35rem;
+}
+
+#receivables-table .waiter-avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-basis: 1.75rem;
+}
+
 #receivables-table .data-table thead th {
   position: sticky;
   top: 0;
