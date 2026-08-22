@@ -29,12 +29,18 @@ export function renderNavItems(navEl) {
     link.dataset.path = item.path;
     link.setAttribute("aria-label", item.label);
     link.innerHTML = `<span class="nav-item-icon" aria-hidden="true">${ICONS[item.icon]}</span><span class="nav-item-label">${item.label}</span>`;
+    // Update immediately on click, then let the router confirm the final state.
+    link.addEventListener("click", () => setActiveNavItem(navEl, item.path));
     navEl.appendChild(link);
   });
 }
 
 export function setActiveNavItem(navEl, path) {
+  const normalized = String(path || "").replace(/\/+$/, "") || "/";
   navEl.querySelectorAll(".nav-item").forEach((el) => {
-    el.classList.toggle("is-active", el.dataset.path === path);
+    const itemPath = String(el.dataset.path || "").replace(/\/+$/, "") || "/";
+    const active = itemPath === normalized;
+    el.classList.toggle("is-active", active);
+    el.setAttribute("aria-current", active ? "page" : "false");
   });
 }
