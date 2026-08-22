@@ -75,6 +75,7 @@ export async function render(container) {
       if (!query) return true;
       return [item.name, categoryName(item), itemPrice(item)].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
     });
+
     renderTable(itemTable, {
       columns: [
         { key: "name", label: "Item" },
@@ -84,10 +85,12 @@ export async function render(container) {
           const button = document.createElement("button");
           button.className = "btn btn-primary btn-sm";
           button.type = "button";
-          button.dataset.posAction = "add";
-          button.dataset.cartItemId = itemId(item);
-          const quantity = cart.get(itemId(item))?.quantity || 0;
-          button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
+          button.textContent = cart.get(itemId(item))?.quantity ? `Add +1 (${cart.get(itemId(item)).quantity})` : "Add";
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            addToCart(item);
+          });
           return button;
         }},
       ],
@@ -115,11 +118,15 @@ export async function render(container) {
           const wrap = document.createElement("div");
           wrap.className = "pos-qty-controls";
           const dec = document.createElement("button");
-          dec.type = "button"; dec.className = "btn btn-ghost btn-sm"; dec.dataset.posAction = "decrease"; dec.dataset.cartItemId = itemId(line.item); dec.textContent = "-"; dec.title = "Decrease quantity";
+          dec.type = "button"; dec.className = "btn btn-ghost btn-sm"; dec.textContent = "-"; dec.title = "Decrease quantity";
+          dec.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); changeQuantity(line.item, -1); });
           const input = document.createElement("input");
-          input.type = "number"; input.min = "1"; input.step = "1"; input.value = String(line.quantity); input.className = "input input-mono pos-qty-input"; input.dataset.posAction = "quantity"; input.dataset.cartItemId = itemId(line.item);
+          input.type = "number"; input.min = "1"; input.step = "1"; input.value = String(line.quantity); input.className = "input input-mono pos-qty-input";
+          input.addEventListener("change", () => setQuantity(line.item, input.value));
+          input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); input.blur(); } });
           const inc = document.createElement("button");
-          inc.type = "button"; inc.className = "btn btn-ghost btn-sm"; inc.dataset.posAction = "increase"; inc.dataset.cartItemId = itemId(line.item); inc.textContent = "+"; inc.title = "Increase quantity";
+          inc.type = "button"; inc.className = "btn btn-ghost btn-sm"; inc.textContent = "+"; inc.title = "Increase quantity";
+          inc.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); changeQuantity(line.item, 1); });
           wrap.append(dec, input, inc);
           return wrap;
         }},
@@ -139,43 +146,22 @@ export async function render(container) {
     renderCart();
   }
 
-  function setQuantity(id, quantity) {
-    const key = String(id);
-    const line = cart.get(key);
+  function setQuantity(item, quantity) {
+    const id = itemId(item);
+    const line = cart.get(id);
     if (!line) return;
     const next = Math.floor(Number(quantity));
-    if (!Number.isFinite(next) || next <= 0) cart.delete(key);
-    else cart.set(key, { ...line, quantity: next });
+    if (!Number.isFinite(next) || next <= 0) cart.delete(id);
+    else cart.set(id, { ...line, quantity: next });
     renderItemTable();
     renderCart();
   }
 
-  function changeQuantity(id, delta) {
-    const key = String(id);
-    const line = cart.get(key);
-    if (line) setQuantity(key, line.quantity + delta);
+  function changeQuantity(item, delta) {
+    const id = itemId(item);
+    const line = cart.get(id);
+    if (line) setQuantity(item, line.quantity + delta);
   }
-
-  container.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-pos-action][data-cart-item-id]");
-    if (!button || !container.contains(button)) return;
-    const action = button.dataset.posAction;
-    const id = button.dataset.cartItemId;
-    event.preventDefault();
-    if (action === "add") {
-      const item = allItems.find((candidate) => itemId(candidate) === id);
-      if (item) addToCart(item);
-    } else if (action === "increase") {
-      changeQuantity(id, 1);
-    } else if (action === "decrease") {
-      changeQuantity(id, -1);
-    }
-  });
-
-  container.addEventListener("change", (event) => {
-    const input = event.target.closest('input[data-pos-action="quantity"]');
-    if (input) setQuantity(input.dataset.cartItemId, input.value);
-  });
 
   function localDateKey(date = new Date()) {
     const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0");
