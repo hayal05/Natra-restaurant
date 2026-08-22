@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn mixed_cart_computes_correct_totals() {
         let mut conn = db();
-        let waiter = waiter_service::create_waiter(&conn, "Alex", None).unwrap();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
         let cola = inventory_service::create_item(&conn, NewItem {
             category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
             purchase_cost: Some(0.5), selling_price: 2.0,
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn empty_cart_is_rejected() {
         let mut conn = db();
-        let waiter = waiter_service::create_waiter(&conn, "Alex", None).unwrap();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
         let result = checkout(&mut conn, CheckoutRequest {
             waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
             lines: vec![], note: None,
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn nonexistent_item_aborts_the_whole_sale() {
         let mut conn = db();
-        let waiter = waiter_service::create_waiter(&conn, "Alex", None).unwrap();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
         let cola = inventory_service::create_item(&conn, NewItem {
             category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
             purchase_cost: Some(0.5), selling_price: 2.0,
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn inactive_item_is_rejected() {
         let mut conn = db();
-        let waiter = waiter_service::create_waiter(&conn, "Alex", None).unwrap();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
         let cola = inventory_service::create_item(&conn, NewItem {
             category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
             purchase_cost: Some(0.5), selling_price: 2.0,
