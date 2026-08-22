@@ -21,10 +21,15 @@ pub fn create_expense(conn: &Connection, category: &str, description: Option<&st
 }
 
 pub fn list_expenses(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<Expense>> {
-    let mut stmt;
     let rows = match (from, to) {
-        (Some(f), Some(t)) => { stmt = conn.prepare("SELECT * FROM expenses WHERE expense_date BETWEEN ?1 AND ?2 ORDER BY expense_date DESC")?; stmt.query_map([f, t], Expense::from_row)?.collect::<Result<Vec<_>, _>>()? }
-        _ => { stmt = conn.prepare("SELECT * FROM expenses ORDER BY expense_date DESC")?; stmt.query_map([], Expense::from_row)?.collect::<Result<Vec<_>, _>>() }
+        (Some(f), Some(t)) => {
+            let mut stmt = conn.prepare("SELECT * FROM expenses WHERE expense_date BETWEEN ?1 AND ?2 ORDER BY expense_date DESC")?;
+            stmt.query_map([f, t], Expense::from_row)?.collect::<Result<Vec<_>, _>>()?
+        }
+        _ => {
+            let mut stmt = conn.prepare("SELECT * FROM expenses ORDER BY expense_date DESC")?;
+            stmt.query_map([], Expense::from_row)?.collect::<Result<Vec<_>, _>>()?
+        }
     };
     Ok(rows)
 }
