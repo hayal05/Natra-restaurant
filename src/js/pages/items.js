@@ -23,9 +23,18 @@ export async function render(container) {
     </div>
     <div class="items-workspace">
       <section class="card items-pane items-pane-wide">
-        <div class="card-header">
+        <div class="card-header items-menu-header">
           <span class="card-title">Menu items</span>
-          <button class="btn btn-sm" style="${NAVY_BUTTON_STYLE}" id="add-item-btn" data-no-header-promotion="true" type="button">Add item</button>
+          <div class="items-header-actions">
+            <div class="items-filter-group items-inline-filters">
+              <select class="select" id="type-filter-header" aria-label="Filter item type">
+                <option value="">All types</option><option value="ready_made">Ready-made</option><option value="cookable">Cookable</option>
+              </select>
+              <label class="checkbox-row"><input type="checkbox" id="show-inactive-header" /> <span>Show inactive</span></label>
+              <span class="badge badge-neutral" id="item-count-header">0 records</span>
+            </div>
+            <button class="btn btn-sm" style="${NAVY_BUTTON_STYLE}" id="add-item-btn" data-no-header-promotion="true" type="button">Add item</button>
+          </div>
         </div>
         <div class="items-pane-scroll" id="item-table"></div>
       </section>
@@ -38,11 +47,26 @@ export async function render(container) {
       </section>
     </div>`;
 
+  // Keep the old filter elements out of the page flow. The functional controls
+  // are now the compact controls in the Menu items title bar.
+  const oldToolbar = container.querySelector(".items-toolbar");
+  if (oldToolbar) oldToolbar.remove();
+
+  const typeFilter = container.querySelector("#type-filter-header");
+  const showInactive = container.querySelector("#show-inactive-header");
+  const syncFilters = () => {
+    const oldType = container.querySelector("#type-filter");
+    const oldInactive = container.querySelector("#show-inactive");
+    if (oldType) typeFilter.value = oldType.value;
+    if (oldInactive) showInactive.checked = oldInactive.checked;
+  };
+
+  typeFilter.addEventListener("change", () => loadItems(container, categories));
+  showInactive.addEventListener("change", () => loadItems(container, categories));
+
   let categories = await loadCategories(container);
   container.querySelector("#add-item-btn").addEventListener("click", () => openItemModal(container, categories));
   container.querySelector("#add-category-btn").addEventListener("click", () => openCategoryModal(container));
-  container.querySelector("#type-filter").addEventListener("change", () => loadItems(container, categories));
-  container.querySelector("#show-inactive").addEventListener("change", () => loadItems(container, categories));
   await loadItems(container, categories);
 }
 
@@ -56,7 +80,6 @@ function renderCategoryTable(container, categories) {
   renderTable(target, {
     columns: [
       { key: "name", label: "Category" },
-      { key: "description", label: "Description", format: (c) => c.description || "—" },
       { key: "actions", label: "Action", format: (category) => { const button = document.createElement("button"); button.className = "btn btn-secondary btn-sm"; button.textContent = "Add item"; button.addEventListener("click", () => openItemModal(container, categories, category.id)); return button; } },
     ], rows: categories, emptyMessage: "No categories yet.", getRowKey: (category) => category.id,
   });
@@ -64,26 +87,31 @@ function renderCategoryTable(container, categories) {
 
 async function loadItems(container, categories = []) {
   const currency = store.getState().settings?.currency ?? "USD";
-  const showInactive = container.querySelector("#show-inactive")?.checked ?? false;
-  const itemType = container.querySelector("#type-filter")?.value || null;
+  const showInactive = container.querySelector("#show-inactive-header")?.checked ?? false;
+  const itemType = container.querySelector("#type-filter-header")?.value || null;
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
   let items;
   try {
-    items = await withErrorToast(() => api.items.list({ only_active: !showInactive, item_type: itemType, category_id: null }));
+    // Fetch the complete item set and apply the two UI filters locally as well.
+    // This keeps the controls reliable even if an older backend ignores one
+    // of the optional filter fields.
+    items = await withErrorToast(() => api.items.list({ only_active: false, item_type: null, category_id: null }));
     items.forEach((item) => itemCache.set(item.id, item));
+    items = items.filter((item) => showInactive || item.is_active !== false);
+    if (itemType) items = items.filter((item) => item.type === itemType || item.item_type === itemType);
   } catch {
     items = Array.from(itemCache.values()).filter((item) => showInactive || item.is_active !== false);
-    if (itemType) items = items.filter((item) => item.type === itemType);
+    if (itemType) items = items.filter((item) => item.type === itemType || item.item_type === itemType);
   }
-  const count = container.querySelector("#item-count"); if (count) count.textContent = `${items.length} record${items.length === 1 ? "" : "s"}`;
+  const countText = `${items.length} record${items.length === 1 ? "" : "s"}`;
+  const count = container.querySelector("#item-count-header"); if (count) count.textContent = countText;
   renderTable(container.querySelector("#item-table"), {
     columns: [
       { key: "name", label: "Item" },
-      { key: "type", label: "Type", format: (item) => { const b = document.createElement("span"); const cookable = item.type === "cookable"; b.className = `badge ${cookable ? "badge-navy" : "badge-neutral"}`; b.textContent = cookable ? "Cookable" : "Ready-made"; return b; } },
+      { key: "type", label: "Type", format: (item) => { const b = document.createElement("span"); const cookable = item.type === "cookable" || item.item_type === "cookable"; b.className = `badge ${cookable ? "badge-navy" : "badge-neutral"}`; b.textContent = cookable ? "Cookable" : "Ready-made"; return b; } },
       { key: "category", label: "Category", format: (item) => categoryMap.get(item.category_id) || "—" },
       { key: "purchase_cost", label: "Unit cost", numeric: true, format: (item) => item.purchase_cost == null ? "Raw materials" : formatMoney(item.purchase_cost, currency) },
       { key: "selling_price", label: "Selling price", numeric: true, format: (item) => formatMoney(item.selling_price, currency) },
-      { key: "margin", label: "Margin", numeric: true, format: (item) => item.purchase_cost == null ? "—" : formatMoney(item.selling_price - item.purchase_cost, currency) },
       { key: "status", label: "Status", format: (item) => { const b = document.createElement("span"); b.className = `badge ${item.is_active ? "badge-sage" : "badge-neutral"}`; b.textContent = item.is_active ? "Active" : "Inactive"; return b; } },
       { key: "actions", label: "Actions", format: (item) => { const actions = document.createElement("div"); actions.className = "row-actions"; const edit = document.createElement("button"); edit.className = "btn btn-secondary btn-sm"; edit.textContent = "Edit pricing"; edit.addEventListener("click", () => openPricingModal(container, item, categories)); actions.appendChild(edit); const toggle = document.createElement("button"); toggle.className = "btn btn-ghost btn-sm"; toggle.textContent = item.is_active ? "Deactivate" : "Activate"; toggle.addEventListener("click", async () => { try { await withErrorToast(() => api.items.setActive(item.id, !item.is_active)); item.is_active = !item.is_active; itemCache.set(item.id, item); await loadItems(container, categories); } catch {} }); actions.appendChild(toggle); return actions; } },
     ], rows: items, emptyMessage: "No items yet — add your first menu item to start selling.", getRowKey: (item) => item.id,
