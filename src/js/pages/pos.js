@@ -76,6 +76,7 @@ export async function render(container) {
       if (!query) return true;
       return [item.name, categoryName(item), itemPrice(item)].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
     });
+
     renderTable(itemTable, {
       columns: [
         { key: "name", label: "Item" },
@@ -83,14 +84,11 @@ export async function render(container) {
         { key: "selling_price", label: "Unit price", numeric: true, format: (item) => formatMoney(itemPrice(item), currency) },
         { key: "action", label: "Action", format: (item) => {
           const button = document.createElement("button");
-          button.className = "btn btn-primary btn-sm";
+          button.className = "btn btn-primary btn-sm pos-add-item";
           button.type = "button";
-          button.textContent = cart.get(itemId(item))?.quantity ? `Add +1 (${cart.get(itemId(item)).quantity})` : "Add";
-          button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            addToCart(item);
-          });
+          button.dataset.itemId = itemId(item);
+          const quantity = cart.get(itemId(item))?.quantity || 0;
+          button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
           return button;
         }},
       ],
@@ -109,8 +107,6 @@ export async function render(container) {
     container.querySelector("#cart-total").textContent = formatMoney(saleTotal, currency);
     container.querySelector("#checkout-btn").disabled = rows.length === 0;
 
-    // Render the current sale directly. Do not rely on the generic table
-    // renderer here: the cart is interactive state and must stay synchronized.
     cartLines.innerHTML = "";
     if (!rows.length) {
       const empty = document.createElement("div");
@@ -179,12 +175,31 @@ export async function render(container) {
     cartLines.appendChild(wrap);
   }
 
+  // One stable delegated handler owns every Add button. The table renderer is
+  // allowed to rebuild rows during search/filter/cart updates without losing
+  // the Add -> Current sale connection.
+  itemTable.addEventListener("click", (event) => {
+    const button = event.target.closest("button.pos-add-item");
+    if (!button || !itemTable.contains(button)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const item = allItems.find((candidate) => itemId(candidate) === String(button.dataset.itemId));
+    if (!item) {
+      pushToast("This item is no longer available.", "error");
+      return;
+    }
+    addToCart(item);
+  });
+
   function addToCart(item) {
     const id = itemId(item);
     const current = cart.get(id);
-    const quantity = (current?.quantity || 0) + 1;
-    cart.set(id, { item, quantity });
+    const nextQuantity = (current?.quantity || 0) + 1;
+    cart.set(id, { item, quantity: nextQuantity });
+
+    // Current sale is updated first and is the authoritative state.
     renderCart();
+    // Then refresh only the visual Add quantity indicator.
     renderItemTable();
   }
 
