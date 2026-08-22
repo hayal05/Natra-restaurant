@@ -1,0 +1,37 @@
+/* Focused workspace scrolling overrides
+   - POS item browsing scrolls inside the item table only.
+   - Daily sales history stays outside that scroll region.
+   - Dashboard waiter receivables show four rows, then scroll internally.
+   - The revenue/profit charts remain in the normal dashboard flow and are
+     unaffected by the waiter table's independent scrolling. */
+
+/* POS: isolate item scrolling from the page/history below it. */
+.pos-layout {
+  overflow: hidden;
+}
+
+.pos-items-table .table-wrap {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pos-daily-history {
+  flex: 0 0 auto;
+}
+
+/* Dashboard: waiter list gets its own compact scroll area after ~4 rows. */
+#receivables-table .table-wrap {
+  max-height: 11.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+#receivables-table .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
