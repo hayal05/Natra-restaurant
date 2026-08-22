@@ -3,7 +3,7 @@
  * exports `render(container)` (sync or async) and an optional `title`.
  *
  * Routes are guarded by `store.getState().user`:
- *   - `public: true`  routes (login, first-run setup) redirect signed-in
+ *   - `public: true` routes (login, first-run setup) redirect signed-in
  *     users away to '/dashboard'.
  *   - all other routes redirect signed-out users to '/login'.
  */
@@ -13,6 +13,7 @@ import { store } from "./state.js";
 const routes = new Map();
 let getContainer = null; // (def) => HTMLElement — lets the caller pick public vs. app-shell layout
 let onNavigate = null; // optional callback, e.g. to update the header title / active nav item
+let navigationVersion = 0;
 
 export function registerRoutes(routeMap) {
   Object.entries(routeMap).forEach(([path, def]) => routes.set(path, def));
@@ -45,6 +46,7 @@ function currentPath() {
 
 async function resolve() {
   const path = currentPath();
+  const version = ++navigationVersion;
   const def = routes.get(path) ?? routes.get("/not-found");
   const { user } = store.getState();
 
@@ -68,9 +70,16 @@ async function resolve() {
   try {
     mod = await def.loader();
   } catch (err) {
+    // Do not let an old, slower navigation overwrite the current page.
+    if (version !== navigationVersion || currentPath() !== path) return;
     renderPlaceholder(outlet, `Couldn't load this page: ${err}`);
+    if (onNavigate) onNavigate({ path, title: def.title ?? "" });
     return;
   }
+
+  // A slower previous navigation may finish after the user has already
+  // selected another sidebar page. Its title must never win the header.
+  if (version !== navigationVersion || currentPath() !== path) return;
 
   if (typeof mod.render !== "function") {
     renderPlaceholder(outlet, "This page is still being built.");
@@ -78,7 +87,12 @@ async function resolve() {
     await mod.render(outlet);
   }
 
-  if (onNavigate) onNavigate({ path, title: mod.title ?? def.title ?? "" });
+  // Page rendering can be asynchronous (database reads). Check again before
+  // updating navigation chrome so a previous page cannot leave its title in
+  // the top bar after the user has moved to another page.
+  if (version !== navigationVersion || currentPath() !== path) return;
+
+  if (onNavigate) onNavigate({ path, title: def.title ?? mod.title ?? "" });
 }
 
 function renderPlaceholder(outlet, message) {
