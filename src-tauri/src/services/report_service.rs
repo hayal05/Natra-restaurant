@@ -26,11 +26,27 @@ pub struct ProductPerformance { pub item_id: i64, pub item_name: String, pub ite
 
 pub fn product_performance(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<ProductPerformance>> {
     let base_sql = "SELECT si.item_id, si.item_name, si.item_type, SUM(si.quantity) AS quantity_sold, SUM(si.line_total) AS total_sales, SUM(si.line_cost) AS total_cost FROM sale_items si JOIN sales s ON s.id = si.sale_id {WHERE} GROUP BY si.item_id, si.item_name, si.item_type ORDER BY total_sales DESC";
-    let rows = match (from, to) {
-        (Some(f), Some(t)) => { let sql = base_sql.replace("{WHERE}", "WHERE s.created_at BETWEEN ?1 AND ?2"); let mut stmt = conn.prepare(&sql)?; stmt.query_map([f, t], map_product_performance)?.collect::<Result<Vec<_>, _>>()? }
-        _ => { let sql = base_sql.replace("{WHERE}", ""); let mut stmt = conn.prepare(&sql)?; stmt.query_map([], map_product_performance)?.collect::<Result<Vec<_>, _>>()? }
-    };
-    Ok(rows)
+
+    // Keep the prepared statement alive for the entire query_map/collect operation.
+    // This explicit scope also avoids rusqlite borrow/lifetime errors on newer Rust.
+    match (from, to) {
+        (Some(f), Some(t)) => {
+            let sql = base_sql.replace("{WHERE}", "WHERE s.created_at BETWEEN ?1 AND ?2");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params![f, t], map_product_performance)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }
+        _ => {
+            let sql = base_sql.replace("{WHERE}", "");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map([], map_product_performance)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }
+    }
 }
 
 fn map_product_performance(row: &rusqlite::Row) -> rusqlite::Result<ProductPerformance> {
