@@ -29,6 +29,10 @@ function promotePageActions(appOutlet, shell) {
   const candidates = appOutlet.querySelectorAll(".card > .card-header button, .card > .card-header > div button");
 
   candidates.forEach((button) => {
+    // Some pages intentionally keep their actions inside the page (for
+    // example Items, where Add item/Add category belong to their tables).
+    if (button.dataset.noHeaderPromotion === "true") return;
+
     const label = button.textContent.trim();
     if (!label || existing.has(label)) {
       if (existing.has(label)) button.remove();
@@ -65,10 +69,6 @@ async function bootstrap(){
       return publicOutlet;
     }
 
-    // Header actions belong exclusively to the page being entered. Because
-    // page buttons are promoted (moved) into this shared header, they would
-    // otherwise survive navigation and appear on unrelated pages. Clear them
-    // before the new page starts rendering, not only after navigation ends.
     clearHeaderActions(shell);
     setHeaderTitle(shell, def.title ?? "");
 
