@@ -75,30 +75,43 @@ export async function render(container) {
     return; // toast already shown
   }
 
-  container.querySelector("#restaurant-name").value = settings.restaurant_name;
-  container.querySelector("#currency").value = settings.currency;
+  // The router moves this page's DOM out of `container` into the live outlet
+  // once render() resolves, leaving `container` itself empty. Every element a
+  // later callback (form submit, sync toggle, backup action) needs must be
+  // captured here while `container` still holds it - never re-queried from
+  // `container` afterwards.
+  const els = {
+    nameInput: container.querySelector("#restaurant-name"),
+    currencyInput: container.querySelector("#currency"),
+    nameError: container.querySelector("#restaurant-name-error"),
+    currencyError: container.querySelector("#currency-error"),
+    generalForm: container.querySelector("#general-form"),
+    syncBadge: container.querySelector("#sync-badge"),
+    syncSection: container.querySelector("#sync-section"),
+    backupBadge: container.querySelector("#backup-badge"),
+    backupSection: container.querySelector("#backup-section"),
+  };
 
-  container.querySelector("#general-form").addEventListener("submit", async (e) => {
+  els.nameInput.value = settings.restaurant_name;
+  els.currencyInput.value = settings.currency;
+
+  els.generalForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const nameInput = container.querySelector("#restaurant-name");
-    const currencyInput = container.querySelector("#currency");
-    nameInput.classList.remove("has-error");
-    currencyInput.classList.remove("has-error");
-    container.querySelector("#restaurant-name-error").textContent = "";
-    container.querySelector("#currency-error").textContent = "";
+    els.nameInput.classList.remove("has-error");
+    els.currencyInput.classList.remove("has-error");
+    els.nameError.textContent = "";
+    els.currencyError.textContent = "";
 
-    const restaurantName = nameInput.value.trim();
-    const currency = currencyInput.value.trim().toUpperCase();
+    const restaurantName = els.nameInput.value.trim();
+    const currency = els.currencyInput.value.trim().toUpperCase();
 
     const error = firstError([
       [isNonEmpty(restaurantName), "Enter a restaurant name."],
       [isNonEmpty(currency), "Enter a currency code."],
     ]);
     if (error) {
-      const el = error.includes("currency") ? currencyInput : nameInput;
-      const errEl = error.includes("currency")
-        ? container.querySelector("#currency-error")
-        : container.querySelector("#restaurant-name-error");
+      const el = error.includes("currency") ? els.currencyInput : els.nameInput;
+      const errEl = error.includes("currency") ? els.currencyError : els.nameError;
       el.classList.add("has-error");
       errEl.textContent = error;
       return;
@@ -117,16 +130,16 @@ export async function render(container) {
     }
   });
 
-  renderSyncSection(container, settings);
-  renderBackupSection(container);
+  renderSyncSection(els, settings);
+  renderBackupSection(els);
 }
 
-function renderSyncSection(container, settings) {
-  const badge = container.querySelector("#sync-badge");
+function renderSyncSection(els, settings) {
+  const badge = els.syncBadge;
   badge.className = "badge " + (settings.sync_enabled ? "badge-sage" : "badge-neutral");
   badge.textContent = settings.sync_enabled ? "Enabled" : "Disabled";
 
-  const section = container.querySelector("#sync-section");
+  const section = els.syncSection;
 
   if (settings.sync_enabled) {
     section.innerHTML = `<button class="btn btn-danger" id="disable-sync-btn">Disable sync</button>`;
@@ -136,7 +149,7 @@ function renderSyncSection(container, settings) {
         const updated = await withErrorToast(() => api.settings.disableSync());
         setSettings(updated);
         pushToast("Sync disabled.", "success");
-        renderSyncSection(container, updated);
+        renderSyncSection(els, updated);
       } catch {
         e.target.disabled = false;
       }
@@ -190,16 +203,16 @@ function renderSyncSection(container, settings) {
       const updated = await withErrorToast(() => api.settings.enableSync(tursoUrl, tursoAuthToken));
       setSettings(updated);
       pushToast("Sync enabled.", "success");
-      renderSyncSection(container, updated);
+      renderSyncSection(els, updated);
     } catch {
       submitBtn.disabled = false;
     }
   });
 }
 
-async function renderBackupSection(container) {
-  const badge = container.querySelector("#backup-badge");
-  const section = container.querySelector("#backup-section");
+async function renderBackupSection(els) {
+  const badge = els.backupBadge;
+  const section = els.backupSection;
 
   let status;
   try {
@@ -208,10 +221,10 @@ async function renderBackupSection(container) {
     return; // toast already shown
   }
 
-  paintBackupSection(container, badge, section, status);
+  paintBackupSection(badge, section, status);
 }
 
-function paintBackupSection(container, badge, section, status) {
+function paintBackupSection(badge, section, status) {
   badge.className = "badge " + (status.enabled ? "badge-sage" : "badge-neutral");
   badge.textContent = status.enabled ? "Enabled" : "Disabled";
 
@@ -248,7 +261,7 @@ function paintBackupSection(container, badge, section, status) {
         pushToast("Backups are disabled.", "error");
       }
       const refreshed = await api.backups.status();
-      paintBackupSection(container, badge, section, refreshed);
+      paintBackupSection(badge, section, refreshed);
     } catch {
       /* toast already shown */
     } finally {
@@ -262,7 +275,7 @@ function paintBackupSection(container, badge, section, status) {
       await withErrorToast(() => api.backups.setEnabled(!status.enabled));
       pushToast(status.enabled ? "Backups disabled." : "Backups enabled.", "success");
       const refreshed = await api.backups.status();
-      paintBackupSection(container, badge, section, refreshed);
+      paintBackupSection(badge, section, refreshed);
     } catch {
       e.target.disabled = false;
     }

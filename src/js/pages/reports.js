@@ -28,10 +28,10 @@ export async function render(container) {
         <h1>Reports</h1>
         <p class="page-subtitle">Monthly revenue, costs, and cash flow.</p>
       </div>
-      <div style="display:flex; gap: var(--space-2);">
-        <select class="select" id="month-select"></select>
-        <select class="select" id="year-select"></select>
-      </div>
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap: var(--space-2); margin-bottom: var(--space-3);">
+      <select class="select" id="month-select"></select>
+      <select class="select" id="year-select"></select>
     </div>
     <div class="grid grid-cols-4" id="stat-row"></div>
     <div class="grid grid-cols-2">
@@ -61,19 +61,31 @@ export async function render(container) {
     .map((y) => `<option value="${y}">${y}</option>`)
     .join("");
 
+  // The router moves this page's DOM out of `container` into the live outlet
+  // once render() resolves, leaving `container` itself empty. Every element a
+  // later callback (month/year change) needs must be captured here while
+  // `container` still holds it - never re-queried from `container` afterwards.
+  const els = {
+    statRow: container.querySelector("#stat-row"),
+    performanceTable: container.querySelector("#performance-table"),
+    salesMixChart: container.querySelector("#sales-mix-chart"),
+    cashFlowTitle: container.querySelector("#cash-flow-title"),
+    cashFlowChart: container.querySelector("#cash-flow-chart"),
+  };
+
   monthSelect.addEventListener("change", () => {
     state.month = Number(monthSelect.value);
-    loadReport(container, state);
+    loadReport(els, state);
   });
   yearSelect.addEventListener("change", () => {
     state.year = Number(yearSelect.value);
-    loadReport(container, state);
+    loadReport(els, state);
   });
 
-  await loadReport(container, state);
+  await loadReport(els, state);
 }
 
-async function loadReport(container, { year, month }) {
+async function loadReport(els, { year, month }) {
   const currency = store.getState().settings?.currency ?? "USD";
   const [from, to] = monthRange(year, month);
 
@@ -89,7 +101,7 @@ async function loadReport(container, { year, month }) {
     return; // toast already shown
   }
 
-  const statRow = container.querySelector("#stat-row");
+  const statRow = els.statRow;
   statRow.innerHTML = "";
   statRow.appendChild(createStatCard({ label: "Revenue", value: formatMoney(summary.sales, currency) }));
   statRow.appendChild(createStatCard({ label: "Ready-made costs", value: formatMoney(summary.ready_made_costs, currency) }));
@@ -103,7 +115,7 @@ async function loadReport(container, { year, month }) {
     })
   );
 
-  renderTable(container.querySelector("#performance-table"), {
+  renderTable(els.performanceTable, {
     columns: [
       { key: "item_name", label: "Item" },
       { key: "quantity_sold", label: "Qty", numeric: true },
@@ -115,14 +127,14 @@ async function loadReport(container, { year, month }) {
     getRowKey: (r) => r.item_id,
   });
 
-  renderBarChart(container.querySelector("#sales-mix-chart"), {
+  renderBarChart(els.salesMixChart, {
     items: mix.map((m) => ({ label: m.item_name, value: m.percentage_of_sales, tone: "navy" })),
     formatValue: (v) => `${v.toFixed(1)}%`,
     emptyMessage: "No sales recorded for this month.",
   });
 
-  container.querySelector("#cash-flow-title").textContent = `Cash flow — ${year}`;
-  renderBarChart(container.querySelector("#cash-flow-chart"), {
+  els.cashFlowTitle.textContent = `Cash flow — ${year}`;
+  renderBarChart(els.cashFlowChart, {
     items: cashFlow.map((m) => ({
       label: monthName(m.month),
       value: m.net,

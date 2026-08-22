@@ -31,16 +31,25 @@ export async function render(container) {
     </div>
   `;
 
+  // The router moves this page's DOM out of `container` into the live outlet
+  // once render() resolves, leaving `container` itself empty. Every element a
+  // later callback (modal submit) needs must be captured here while
+  // `container` still holds it - never re-queried from `container` afterwards.
+  const els = {
+    statRow: container.querySelector("#stat-row"),
+    expensesTable: container.querySelector("#expenses-table"),
+  };
+
   const addBtn = document.createElement("button");
   addBtn.className = "btn btn-primary";
   addBtn.textContent = "Add expense";
-  addBtn.addEventListener("click", () => openExpenseModal(container));
+  addBtn.addEventListener("click", () => openExpenseModal(els));
   setHeaderActions(document, [addBtn]);
 
-  await loadExpenses(container);
+  await loadExpenses(els);
 }
 
-async function loadExpenses(container) {
+async function loadExpenses(els) {
   const currency = store.getState().settings?.currency ?? "USD";
 
   let expenses;
@@ -55,7 +64,7 @@ async function loadExpenses(container) {
   expenses.forEach((e) => byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + e.amount));
   const topCategory = [...byCategory.entries()].sort((a, b) => b[1] - a[1])[0];
 
-  const statRow = container.querySelector("#stat-row");
+  const statRow = els.statRow;
   statRow.innerHTML = "";
   statRow.appendChild(createStatCard({ label: "Total expenses", value: formatMoney(total, currency), tone: "rust" }));
   statRow.appendChild(createStatCard({ label: "Entries logged", value: String(expenses.length) }));
@@ -67,7 +76,7 @@ async function loadExpenses(container) {
     })
   );
 
-  renderTable(container.querySelector("#expenses-table"), {
+  renderTable(els.expensesTable, {
     columns: [
       { key: "expense_date", label: "Date", format: (e) => formatDate(e.expense_date) },
       { key: "category", label: "Category" },
@@ -80,7 +89,7 @@ async function loadExpenses(container) {
   });
 }
 
-function openExpenseModal(container) {
+function openExpenseModal(els) {
   const form = document.createElement("form");
   form.noValidate = true;
   form.innerHTML = `
@@ -141,7 +150,7 @@ function openExpenseModal(container) {
       await withErrorToast(() => api.expenses.create(category, description || null, amount, expenseDate, null));
       pushToast("Expense added.", "success");
       closeModal();
-      loadExpenses(container);
+      loadExpenses(els);
     } catch {
       saveBtn.disabled = false;
     }

@@ -16,18 +16,29 @@ export async function render(container) {
       <div id="waiter-table"></div>
     </div>`;
 
+  // The router moves this page's DOM out of `container` into the live outlet
+  // once render() resolves, leaving `container` itself empty. Any element a
+  // later callback (checkbox change, modal submit, row action) needs must be
+  // captured here while `container` still holds it - never re-queried from
+  // `container` afterwards.
+  const els = {
+    showInactive: container.querySelector("#show-inactive"),
+    waiterCount: container.querySelector("#waiter-count"),
+    waiterTable: container.querySelector("#waiter-table"),
+  };
+
   const addBtn = document.createElement("button");
   addBtn.className = "btn btn-primary";
   addBtn.textContent = "Add waiter";
-  addBtn.addEventListener("click", () => openAddWaiterModal(container));
+  addBtn.addEventListener("click", () => openAddWaiterModal(els));
   setHeaderActions(document, [addBtn]);
-  container.querySelector("#show-inactive").addEventListener("change", () => loadWaiters(container));
-  await loadWaiters(container);
+  els.showInactive.addEventListener("change", () => loadWaiters(els));
+  await loadWaiters(els);
 }
 
-async function loadWaiters(container) {
+async function loadWaiters(els) {
   const currency = store.getState().settings?.currency ?? "USD";
-  const showInactive = container.querySelector("#show-inactive").checked;
+  const showInactive = els.showInactive.checked;
   let all, receivables;
   try {
     [all, receivables] = await Promise.all([
@@ -36,8 +47,8 @@ async function loadWaiters(container) {
     ]);
   } catch { return; }
   const receivableMap = new Map(receivables.map((r) => [r.waiter.id, r.receivable]));
-  container.querySelector("#waiter-count").textContent = `${all.length} record${all.length === 1 ? "" : "s"}`;
-  renderTable(container.querySelector("#waiter-table"), {
+  els.waiterCount.textContent = `${all.length} record${all.length === 1 ? "" : "s"}`;
+  renderTable(els.waiterTable, {
     columns: [
       { key: "full_name", label: "Waiter", format: (w) => waiterIdentity(w) },
       { key: "phone", label: "Phone", format: (w) => w.phone || "—" },
@@ -45,8 +56,8 @@ async function loadWaiters(container) {
       { key: "receivable", label: "Receivable", numeric: true, format: (w) => formatMoney(receivableMap.get(w.id) ?? 0, currency) },
       { key: "actions", label: "Actions", format: (w) => {
         const actions=document.createElement("div"); actions.className="row-actions"; const receivable=receivableMap.get(w.id)??0;
-        if(receivable>0){ const b=document.createElement("button"); b.className="btn btn-secondary btn-sm"; b.textContent="Settle"; b.addEventListener("click",async()=>{try{await withErrorToast(()=>api.waiters.settle(w.id));pushToast("Waiter settled.","success");loadWaiters(container);}catch{}}); actions.appendChild(b); }
-        const toggle=document.createElement("button"); toggle.className="btn btn-ghost btn-sm"; toggle.textContent=w.is_active?"Deactivate":"Activate"; toggle.addEventListener("click",async()=>{try{await withErrorToast(()=>api.waiters.setActive(w.id,!w.is_active));loadWaiters(container);}catch{}}); actions.appendChild(toggle); return actions;
+        if(receivable>0){ const b=document.createElement("button"); b.className="btn btn-secondary btn-sm"; b.textContent="Settle"; b.addEventListener("click",async()=>{try{await withErrorToast(()=>api.waiters.settle(w.id));pushToast("Waiter settled.","success");loadWaiters(els);}catch{}}); actions.appendChild(b); }
+        const toggle=document.createElement("button"); toggle.className="btn btn-ghost btn-sm"; toggle.textContent=w.is_active?"Deactivate":"Activate"; toggle.addEventListener("click",async()=>{try{await withErrorToast(()=>api.waiters.setActive(w.id,!w.is_active));loadWaiters(els);}catch{}}); actions.appendChild(toggle); return actions;
       } },
     ], rows: all, emptyMessage: "No waiters yet — add your first waiter to start taking sales.", getRowKey: (w) => w.id,
   });
@@ -59,7 +70,7 @@ function waiterIdentity(waiter) {
   const name=document.createElement("span"); name.textContent=waiter.full_name; wrap.append(avatar,name); return wrap;
 }
 
-function openAddWaiterModal(container) {
+function openAddWaiterModal(els) {
   const form=document.createElement("form"); form.noValidate=true;
   form.innerHTML=`
     <div class="field"><label class="field-label" for="waiter-photo">Profile photo</label><input class="input" id="waiter-photo" type="file" accept="image/jpeg,image/png,image/webp" /><div id="waiter-photo-preview" class="waiter-photo-preview"><span>No photo selected</span></div><small class="field-help">JPG, PNG or WebP. The image is resized locally before saving.</small></div>
@@ -71,7 +82,7 @@ function openAddWaiterModal(container) {
   const cancel=document.createElement("button"); cancel.className="btn btn-secondary"; cancel.type="button"; cancel.textContent="Cancel"; cancel.addEventListener("click",closeModal);
   const save=document.createElement("button"); save.className="btn btn-primary"; save.type="button"; save.textContent="Add waiter"; save.addEventListener("click",()=>form.requestSubmit());
   openModal({title:"New waiter",content:form,actions:[cancel,save]});
-  form.addEventListener("submit",async(e)=>{e.preventDefault();const fullName=form.fullName.value.trim();const phone=form.phone.value.trim();const error=firstError([[isNonEmpty(fullName),"Enter the waiter's name."]]);if(error){form.querySelector("#waiter-name").classList.add("has-error");form.querySelector("#waiter-name-error").textContent=error;return;}save.disabled=true;try{await withErrorToast(()=>api.waiters.create(fullName,phone||null,profilePhoto));pushToast("Waiter added.","success");closeModal();loadWaiters(container);}catch{save.disabled=false;}});
+  form.addEventListener("submit",async(e)=>{e.preventDefault();const fullName=form.fullName.value.trim();const phone=form.phone.value.trim();const error=firstError([[isNonEmpty(fullName),"Enter the waiter's name."]]);if(error){form.querySelector("#waiter-name").classList.add("has-error");form.querySelector("#waiter-name-error").textContent=error;return;}save.disabled=true;try{await withErrorToast(()=>api.waiters.create(fullName,phone||null,profilePhoto));pushToast("Waiter added.","success");closeModal();loadWaiters(els);}catch{save.disabled=false;}});
 }
 
 function prepareProfilePhoto(file){

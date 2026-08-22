@@ -36,16 +36,26 @@ export async function render(container) {
     </div>
   `;
 
+  // The router moves this page's DOM out of `container` into the live outlet
+  // once render() resolves, leaving `container` itself empty. Every element a
+  // later callback (modal submit) needs must be captured here while
+  // `container` still holds it - never re-queried from `container` afterwards.
+  const els = {
+    statRow: container.querySelector("#stat-row"),
+    materialsTable: container.querySelector("#materials-table"),
+    purchasesTable: container.querySelector("#purchases-table"),
+  };
+
   const addBtn = document.createElement("button");
   addBtn.className = "btn btn-primary";
   addBtn.textContent = "Add material";
-  addBtn.addEventListener("click", () => openMaterialModal(container));
+  addBtn.addEventListener("click", () => openMaterialModal(els));
   setHeaderActions(document, [addBtn]);
 
-  await loadAll(container);
+  await loadAll(els);
 }
 
-async function loadAll(container) {
+async function loadAll(els) {
   const currency = store.getState().settings?.currency ?? "USD";
 
   let materials, purchases, totalCost;
@@ -59,7 +69,7 @@ async function loadAll(container) {
     return; // toast already shown
   }
 
-  const statRow = container.querySelector("#stat-row");
+  const statRow = els.statRow;
   statRow.innerHTML = "";
   statRow.appendChild(createStatCard({ label: "Active materials", value: String(materials.length) }));
   statRow.appendChild(createStatCard({ label: "Total raw-material cost", value: formatMoney(totalCost, currency), tone: "rust" }));
@@ -67,7 +77,7 @@ async function loadAll(container) {
 
   const materialsById = new Map(materials.map((m) => [m.id, m]));
 
-  renderTable(container.querySelector("#materials-table"), {
+  renderTable(els.materialsTable, {
     columns: [
       { key: "name", label: "Name" },
       { key: "unit", label: "Unit" },
@@ -78,7 +88,7 @@ async function loadAll(container) {
           const btn = document.createElement("button");
           btn.className = "btn btn-secondary btn-sm";
           btn.textContent = "Record purchase";
-          btn.addEventListener("click", () => openPurchaseModal(container, m));
+          btn.addEventListener("click", () => openPurchaseModal(els, m));
           return btn;
         },
       },
@@ -88,7 +98,7 @@ async function loadAll(container) {
     getRowKey: (m) => m.id,
   });
 
-  renderTable(container.querySelector("#purchases-table"), {
+  renderTable(els.purchasesTable, {
     columns: [
       { key: "purchase_date", label: "Date", format: (p) => formatDate(p.purchase_date) },
       { key: "material", label: "Material", format: (p) => materialsById.get(p.raw_material_id)?.name ?? `#${p.raw_material_id}` },
@@ -103,7 +113,7 @@ async function loadAll(container) {
   });
 }
 
-function openMaterialModal(container) {
+function openMaterialModal(els) {
   const form = document.createElement("form");
   form.noValidate = true;
   form.innerHTML = `
@@ -149,14 +159,14 @@ function openMaterialModal(container) {
       await withErrorToast(() => api.rawMaterials.create(name, unit));
       pushToast("Raw material added.", "success");
       closeModal();
-      loadAll(container);
+      loadAll(els);
     } catch {
       saveBtn.disabled = false;
     }
   });
 }
 
-function openPurchaseModal(container, material) {
+function openPurchaseModal(els, material) {
   const form = document.createElement("form");
   form.noValidate = true;
   form.innerHTML = `
@@ -222,7 +232,7 @@ function openPurchaseModal(container, material) {
       );
       pushToast("Purchase recorded.", "success");
       closeModal();
-      loadAll(container);
+      loadAll(els);
     } catch {
       saveBtn.disabled = false;
     }

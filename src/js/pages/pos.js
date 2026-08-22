@@ -45,6 +45,19 @@ export async function render(container) {
   const waiterSelect = container.querySelector("#waiter-select");
   const typeFilter = container.querySelector("#type-filter");
   const searchInput = container.querySelector("#item-search");
+  const paymentSelect = container.querySelector("#payment-select");
+  const cartCountEl = container.querySelector("#cart-count");
+  const cartTotalEl = container.querySelector("#cart-total");
+  const checkoutBtn = container.querySelector("#checkout-btn");
+  const dailyHistoryTable = container.querySelector("#daily-sales-table");
+  const dailyHistoryTotalEl = container.querySelector("#daily-history-total");
+  // The router renders each page into a detached staging element and only
+  // moves its children into the live outlet once render() resolves. `container`
+  // itself stays behind, empty, after that move - so every element we'll need
+  // later (cart totals, the checkout button, daily history) must be captured
+  // here, up front, while `container` still holds them. Re-querying `container`
+  // from inside a later callback (a click handler, a re-render) would silently
+  // hit the emptied-out node and return null.
   let allItems = [];
   let allWaiters = [];
 
@@ -124,9 +137,9 @@ export async function render(container) {
     const totalQuantity = rows.reduce((sum, line) => sum + line.quantity, 0);
     const saleTotal = rows.reduce((sum, line) => sum + lineTotal(line), 0);
 
-    container.querySelector("#cart-count").textContent = `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`;
-    container.querySelector("#cart-total").textContent = formatMoney(saleTotal, currency);
-    container.querySelector("#checkout-btn").disabled = rows.length === 0;
+    cartCountEl.textContent = `${totalQuantity} item${totalQuantity === 1 ? "" : "s"}`;
+    cartTotalEl.textContent = formatMoney(saleTotal, currency);
+    checkoutBtn.disabled = rows.length === 0;
 
     cartLines.innerHTML = "";
     if (!rows.length) {
@@ -231,13 +244,13 @@ export async function render(container) {
   }
 
   async function renderDailyHistory() {
-    const table = container.querySelector("#daily-sales-table");
+    const table = dailyHistoryTable;
     try {
       const sales = await withErrorToast(() => api.pos.listSales(null, 200));
       const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === localDateKey());
       const waiterById = new Map(allWaiters.map((w) => [w.id, w.full_name]));
       const total = todaySales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
-      container.querySelector("#daily-history-total").textContent = `${todaySales.length} sale${todaySales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
+      dailyHistoryTotalEl.textContent = `${todaySales.length} sale${todaySales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
       renderTable(table, {
         columns: [
           { key: "created_at", label: "Time", format: (sale) => { const value = String(sale.created_at || ""); return value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16) || "-"; } },
@@ -249,7 +262,7 @@ export async function render(container) {
         ], rows: todaySales, emptyMessage: "No sales recorded today yet.", getRowKey: (sale) => sale.id,
       });
     } catch {
-      container.querySelector("#daily-history-total").textContent = "";
+      dailyHistoryTotalEl.textContent = "";
     }
   }
 
@@ -259,16 +272,16 @@ export async function render(container) {
   renderCart();
   await renderDailyHistory();
 
-  container.querySelector("#checkout-btn").addEventListener("click", async () => {
+  checkoutBtn.addEventListener("click", async () => {
     const waiterId = Number(waiterSelect.value);
     if (!waiterId) return pushToast("Select a waiter before completing the sale.", "error");
     if (!cart.size) return pushToast("Add at least one item before completing the sale.", "error");
     const lines = Array.from(cart.values()).map(({ item, quantity }) => ({ item_id: item.id, quantity: Math.floor(quantity) })).filter((line) => line.quantity > 0);
-    const button = container.querySelector("#checkout-btn");
+    const button = checkoutBtn;
     button.disabled = true;
     button.textContent = "Completing...";
     try {
-      const result = await api.pos.checkout({ waiter_id: waiterId, user_id: store.getState().user?.id ?? null, payment_method: container.querySelector("#payment-select").value, lines, note: null });
+      const result = await api.pos.checkout({ waiter_id: waiterId, user_id: store.getState().user?.id ?? null, payment_method: paymentSelect.value, lines, note: null });
       const completedTotal = Number(result?.sale?.total_amount ?? lines.reduce((sum, line) => {
         const item = allItems.find((candidate) => itemId(candidate) === String(line.item_id));
         return sum + itemPrice(item || {}) * line.quantity;

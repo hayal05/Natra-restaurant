@@ -1,5 +1,6 @@
 /** Dashboard: the "walk in and see how the day looks" page. */
 import * as api from "../api.js";
+import { refresh } from "../router.js";
 import { store, withErrorToast, pushToast } from "../state.js";
 import { clearHeaderActions } from "../components/header.js";
 import { createStatCard } from "../components/stat-card.js";
@@ -24,7 +25,7 @@ export async function render(container) {
   renderTable(container.querySelector("#receivables-table"),{columns:[
     {key:"waiter",label:"Waiter",format:(r)=>waiterIdentity(r.waiter)},
     {key:"receivable",label:"Receivable",numeric:true,format:(r)=>formatMoney(r.receivable,currency)},
-    {key:"settle",label:"Action",format:(r)=>{const button=document.createElement("button");button.className="btn btn-secondary btn-sm";button.textContent="Settle";button.disabled=!(r.receivable>0);button.addEventListener("click",async()=>{button.disabled=true;try{await withErrorToast(()=>api.waiters.settle(r.waiter.id));pushToast(`${r.waiter.full_name} settled.`,"success");await render(container);}catch{button.disabled=false;}});return button;}}
+    {key:"settle",label:"Action",format:(r)=>{const button=document.createElement("button");button.className="btn btn-secondary btn-sm";button.textContent="Settle";button.disabled=!(r.receivable>0);button.addEventListener("click",async()=>{button.disabled=true;try{await withErrorToast(()=>api.waiters.settle(r.waiter.id));pushToast(`${r.waiter.full_name} settled.`,"success");await refresh();}catch{button.disabled=false;}});return button;}}
   ],rows:summary.waiter_receivables.slice().sort((a,b)=>b.receivable-a.receivable),emptyMessage:"No active waiters yet.",getRowKey:(r)=>r.waiter.id});
   renderDonutChart(container.querySelector("#sales-mix-chart"),{items:summary.sales_mix_this_month.map((m)=>({label:m.item_name,value:m.percentage_of_sales})),formatValue:(v)=>`${v.toFixed(1)}%`,centerValue:formatMoney(summary.this_month.sales,currency),centerLabel:"this month",emptyMessage:"No sales recorded this month yet."});
   renderLineChart(container.querySelector("#revenue-profit-chart"),{points:summary.revenue_profit_trend.map((d)=>({date:d.date,revenue:d.revenue,profit:d.profit})),formatValue:(v)=>formatMoney(v,currency),formatDate:formatDateShort,emptyMessage:"No sales recorded in the last 14 days."});
