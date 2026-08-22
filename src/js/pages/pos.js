@@ -68,6 +68,26 @@ export async function render(container) {
   const itemPrice = (item) => Number(item.selling_price ?? item.sellingPrice ?? 0);
   const lineTotal = (line) => itemPrice(line.item) * line.quantity;
 
+  function syncAddButton(button) {
+    const quantity = cart.get(String(button.dataset.itemId))?.quantity || 0;
+    button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
+  }
+
+  function bindAddButtons() {
+    itemTable.querySelectorAll("button.pos-add-item").forEach((button) => {
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = allItems.find((candidate) => itemId(candidate) === String(button.dataset.itemId));
+        if (!item) {
+          pushToast("This item is no longer available.", "error");
+          return;
+        }
+        addToCart(item, button);
+      };
+    });
+  }
+
   function renderItemTable() {
     const filterType = typeFilter.value;
     const query = searchInput.value.trim().toLocaleLowerCase();
@@ -87,8 +107,7 @@ export async function render(container) {
           button.className = "btn btn-primary btn-sm pos-add-item";
           button.type = "button";
           button.dataset.itemId = itemId(item);
-          const quantity = cart.get(itemId(item))?.quantity || 0;
-          button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
+          syncAddButton(button);
           return button;
         }},
       ],
@@ -96,6 +115,8 @@ export async function render(container) {
       emptyMessage: query ? "No items match your search." : "No active items match this filter.",
       getRowKey: (item) => itemId(item),
     });
+
+    bindAddButtons();
   }
 
   function renderCart() {
@@ -175,32 +196,15 @@ export async function render(container) {
     cartLines.appendChild(wrap);
   }
 
-  // One stable delegated handler owns every Add button. The table renderer is
-  // allowed to rebuild rows during search/filter/cart updates without losing
-  // the Add -> Current sale connection.
-  itemTable.addEventListener("click", (event) => {
-    const button = event.target.closest("button.pos-add-item");
-    if (!button || !itemTable.contains(button)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const item = allItems.find((candidate) => itemId(candidate) === String(button.dataset.itemId));
-    if (!item) {
-      pushToast("This item is no longer available.", "error");
-      return;
-    }
-    addToCart(item);
-  });
-
-  function addToCart(item) {
+  function addToCart(item, sourceButton = null) {
     const id = itemId(item);
     const current = cart.get(id);
     const nextQuantity = (current?.quantity || 0) + 1;
     cart.set(id, { item, quantity: nextQuantity });
 
-    // Current sale is updated first and is the authoritative state.
+    // The cart is updated before any item-table repaint. Current sale is the source of truth.
     renderCart();
-    // Then refresh only the visual Add quantity indicator.
-    renderItemTable();
+    if (sourceButton && itemTable.contains(sourceButton)) syncAddButton(sourceButton);
   }
 
   function setQuantity(item, quantity) {
@@ -211,7 +215,8 @@ export async function render(container) {
     if (!Number.isFinite(next) || next <= 0) cart.delete(id);
     else cart.set(id, { ...line, quantity: next });
     renderCart();
-    renderItemTable();
+    const button = itemTable.querySelector(`button.pos-add-item[data-item-id="${CSS.escape(id)}"]`);
+    if (button) syncAddButton(button);
   }
 
   function changeQuantity(item, delta) {
