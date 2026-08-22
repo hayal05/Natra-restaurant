@@ -42,9 +42,16 @@ function promotePageActions(appOutlet, shell) {
 async function bootstrap(){
   const {publicScreen,publicOutlet,shell,appOutlet}=buildLayouts();
   registerRoutes({
-    "/setup":{loader:()=>import("./auth/initialization.js"),public:true}, "/login":{loader:()=>import("./auth/login.js"),public:true},
-    "/dashboard":{loader:()=>import("./pages/dashboard.js")}, "/pos":{loader:()=>import("./pages/pos.js")}, "/waiters":{loader:()=>import("./pages/waiters.js")}, "/items":{loader:()=>import("./pages/items.js")},
-    "/raw-materials":{loader:()=>import("./pages/raw-materials.js")}, "/expenses":{loader:()=>import("./pages/expenses.js")}, "/reports":{loader:()=>import("./pages/reports.js")}, "/settings":{loader:()=>import("./pages/settings.js")}
+    "/setup":{loader:()=>import("./auth/initialization.js"),public:true,title:"Setup"},
+    "/login":{loader:()=>import("./auth/login.js"),public:true,title:"Login"},
+    "/dashboard":{loader:()=>import("./pages/dashboard.js"),title:"Dashboard"},
+    "/pos":{loader:()=>import("./pages/pos.js"),title:"Point of sale"},
+    "/waiters":{loader:()=>import("./pages/waiters.js"),title:"Waiters"},
+    "/items":{loader:()=>import("./pages/items.js"),title:"Items"},
+    "/raw-materials":{loader:()=>import("./pages/raw-materials.js"),title:"Raw materials"},
+    "/expenses":{loader:()=>import("./pages/expenses.js"),title:"Expenses"},
+    "/reports":{loader:()=>import("./pages/reports.js"),title:"Reports"},
+    "/settings":{loader:()=>import("./pages/settings.js"),title:"Settings"}
   });
 
   const actionObserver = new MutationObserver(() => promotePageActions(appOutlet, shell));
