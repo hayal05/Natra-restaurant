@@ -21,7 +21,7 @@ export async function render(container) {
         <div class="card-header pos-items-toolbar">
           <div>
             <span class="card-title">Items</span>
-            <div class="pos-items-hint">Search by product name, category, type or price</div>
+            <div class="pos-items-hint">Search by product name, category or price</div>
           </div>
           <div class="pos-item-filters">
             <label class="pos-search" aria-label="Search items">
@@ -80,15 +80,7 @@ export async function render(container) {
     const filtered = allItems.filter((item) => {
       if (filterType && item.type !== filterType) return false;
       if (!query) return true;
-
-      const searchable = [
-        item.name,
-        categoryName(item),
-        item.type,
-        humanizeEnum(item.type),
-        item.selling_price,
-      ].map((value) => String(value ?? "").toLocaleLowerCase());
-
+      const searchable = [item.name, categoryName(item), item.selling_price].map((value) => String(value ?? "").toLocaleLowerCase());
       return searchable.some((value) => value.includes(query));
     });
 
@@ -96,12 +88,6 @@ export async function render(container) {
       columns: [
         { key: "name", label: "Item" },
         { key: "category", label: "Category", format: (item) => categoryName(item) },
-        { key: "type", label: "Type", format: (item) => {
-          const badge = document.createElement("span");
-          badge.className = `badge ${item.type === "cookable" ? "badge-navy" : "badge-neutral"}`;
-          badge.textContent = item.type === "cookable" ? "Cookable" : "Ready-made";
-          return badge;
-        }},
         { key: "selling_price", label: "Unit price", numeric: true, format: (item) => formatMoney(item.selling_price, currency) },
         { key: "action", label: "Action", format: (item) => {
           const button = document.createElement("button");
@@ -140,53 +126,33 @@ export async function render(container) {
   }
 
   function localDateKey(date = new Date()) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0"); return `${y}-${m}-${d}`;
   }
 
   async function renderDailyHistory() {
     const table = container.querySelector("#daily-sales-table");
     try {
       const sales = await withErrorToast(() => api.pos.listSales(null, 200));
-      const today = localDateKey();
-      const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === today);
+      const today = localDateKey(); const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === today);
       const waiterById = new Map(allWaiters.map((w) => [w.id, w.full_name]));
       const total = todaySales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
       container.querySelector("#daily-history-total").textContent = `${todaySales.length} sale${todaySales.length === 1 ? "" : "s"} · ${formatMoney(total, currency)}`;
-
       renderTable(table, {
         columns: [
-          { key: "created_at", label: "Time", format: (sale) => {
-            const value = String(sale.created_at || "");
-            const time = value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16);
-            return time || "—";
-          } },
+          { key: "created_at", label: "Time", format: (sale) => { const value = String(sale.created_at || ""); const time = value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16); return time || "—"; } },
           { key: "waiter_id", label: "Waiter", format: (sale) => waiterById.get(sale.waiter_id) || `Waiter #${sale.waiter_id}` },
           { key: "total_quantity", label: "Qty", numeric: true },
           { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
           { key: "total_amount", label: "Total", numeric: true, format: (sale) => formatMoney(sale.total_amount, currency) },
-          { key: "is_settled", label: "Status", format: (sale) => {
-            const badge = document.createElement("span");
-            badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`;
-            badge.textContent = sale.is_settled ? "Settled" : "Open";
-            return badge;
-          } },
-        ],
-        rows: todaySales,
-        emptyMessage: "No sales recorded today yet.",
-        getRowKey: (sale) => sale.id,
+          { key: "is_settled", label: "Status", format: (sale) => { const badge = document.createElement("span"); badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`; badge.textContent = sale.is_settled ? "Settled" : "Open"; return badge; } },
+        ], rows: todaySales, emptyMessage: "No sales recorded today yet.", getRowKey: (sale) => sale.id,
       });
-    } catch {
-      container.querySelector("#daily-history-total").textContent = "";
-    }
+    } catch { container.querySelector("#daily-history-total").textContent = ""; }
   }
 
   typeFilter.addEventListener("change", renderItemTable);
   searchInput.addEventListener("input", renderItemTable);
-  renderItemTable(); renderCart();
-  await renderDailyHistory();
+  renderItemTable(); renderCart(); await renderDailyHistory();
 
   container.querySelector("#checkout-btn").addEventListener("click", async () => {
     const waiterId = Number(waiterSelect.value);
