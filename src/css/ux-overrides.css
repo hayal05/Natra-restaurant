@@ -48,3 +48,28 @@
   .pos-items-toolbar { align-items:flex-start; flex-wrap:wrap; }
   .pos-item-filters { width:100%; }
 }
+
+/* Reports: daily report product groups (ready-made / cookable tables). */
+.report-product-group { margin-top: var(--space-5); }
+.report-group-title { font-size: var(--text-sm); font-weight: 700; color: var(--color-ink); margin-bottom: var(--space-2); }
+
+/* Reports: daily report printing. The sheet is built fresh each time the
+   Print button is clicked (see reports.js printDailyReport) and stays
+   hidden on screen; the print media query below swaps it in and hides
+   the rest of the app chrome so only the report ends up on paper / PDF. */
+#daily-print-sheet { display: none; }
+.print-sheet-header { margin-bottom: var(--space-4); }
+.print-sheet-header h1 { font-size: var(--text-lg); font-weight: 750; color: var(--color-ink); }
+.print-sheet-header p { font-size: var(--text-sm); color: var(--color-ink-soft); margin-top: var(--space-1); }
+
+@media print {
+  #app { display: none !important; }
+  #daily-print-sheet {
+    display: block !important;
+    padding: 0.5in;
+    background: #fff;
+  }
+  #daily-print-sheet .ticket-card,
+  #daily-print-sheet .table-wrap { box-shadow: none !important; }
+  #daily-print-sheet .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
