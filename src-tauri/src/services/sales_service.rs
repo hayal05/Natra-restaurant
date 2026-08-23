@@ -156,17 +156,44 @@ pub fn checkout(conn: &mut Connection, req: CheckoutRequest) -> AppResult<Checko
     })
 }
 
-pub fn list_sales(conn: &Connection, waiter_id: Option<i64>, limit: i64) -> AppResult<Vec<Sale>> {
-    let sql = if waiter_id.is_some() {
-        "SELECT * FROM sales WHERE waiter_id = ?1 ORDER BY created_at DESC LIMIT ?2"
-    } else {
-        "SELECT * FROM sales ORDER BY created_at DESC LIMIT ?1"
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = match waiter_id {
-        Some(id) => stmt.query_map(rusqlite::params![id, limit], Sale::from_row)?,
-        None => stmt.query_map(rusqlite::params![limit], Sale::from_row)?,
-    };
+/// List sales, optionally narrowed to a waiter and/or a `created_at` window.
+/// `from`/`to` are inclusive and expected in the same
+/// `"YYYY-MM-DD HH:MM:SS"` shape the rest of the app uses for date-range
+/// queries (see `dates.js::monthRange` on the frontend) so a caller can
+/// pass a single day (`from == to`'s date at 00:00:00/23:59:59) or a wider
+/// range interchangeably. `limit` is optional — omit it to get every sale
+/// in the window, which a date-bounded query already keeps to a sane size.
+pub fn list_sales(
+    conn: &Connection,
+    waiter_id: Option<i64>,
+    from: Option<&str>,
+    to: Option<&str>,
+    limit: Option<i64>,
+) -> AppResult<Vec<Sale>> {
+    let mut sql = String::from("SELECT * FROM sales WHERE 1=1");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(id) = waiter_id {
+        sql.push_str(" AND waiter_id = ?");
+        params.push(Box::new(id));
+    }
+    if let Some(f) = from {
+        sql.push_str(" AND created_at >= ?");
+        params.push(Box::new(f.to_string()));
+    }
+    if let Some(t) = to {
+        sql.push_str(" AND created_at <= ?");
+        params.push(Box::new(t.to_string()));
+    }
+    sql.push_str(" ORDER BY created_at DESC");
+    if let Some(lim) = limit {
+        sql.push_str(" LIMIT ?");
+        params.push(Box::new(lim));
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), Sale::from_row)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
