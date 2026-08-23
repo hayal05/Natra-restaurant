@@ -116,7 +116,7 @@ export async function render(container) {
 
   function syncAddButton(button) {
     const quantity = cart.get(String(button.dataset.itemId))?.quantity || 0;
-    button.textContent = quantity ? `Add +1 (${quantity})` : "Add";
+    button.textContent = quantity ? `Add (${quantity})` : "Add";
   }
 
   function bindAddButtons() {
