@@ -2,7 +2,7 @@
 use tauri::State;
 use crate::database::Db;
 use crate::errors::AppResult;
-use crate::models::Waiter;
+use crate::models::{Sale, Waiter};
 use crate::services::waiter_service::{self, WaiterReceivable};
 
 #[tauri::command]
@@ -27,6 +27,15 @@ pub fn set_waiter_active(db: State<Db>, waiter_id: i64, is_active: bool) -> AppR
 pub fn list_waiter_receivables(db: State<Db>) -> AppResult<Vec<WaiterReceivable>> {
     let conn = db.lock();
     waiter_service::list_receivables(&conn)
+}
+
+/// The sales a waiter's current receivable is made up of — same rows the
+/// dashboard's receivable total is summed from, so "view sources" always
+/// matches the number shown next to it.
+#[tauri::command]
+pub fn list_waiter_receivable_sales(db: State<Db>, waiter_id: i64) -> AppResult<Vec<Sale>> {
+    let conn = db.lock();
+    waiter_service::list_receivable_sales(&conn, waiter_id)
 }
 
 #[tauri::command]
