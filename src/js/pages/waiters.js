@@ -95,6 +95,7 @@ function waiterIdentity(waiter) {
 async function openReceivableSourcesModal(waiter, currency) {
   const body = document.createElement("div");
   const tableHost = document.createElement("div");
+  tableHost.className = "modal-table-host";
   body.appendChild(tableHost);
   const loading = document.createElement("p");
   loading.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);";
