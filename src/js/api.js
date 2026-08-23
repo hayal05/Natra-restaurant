@@ -15,6 +15,7 @@ export const waiters = {
   setActive: (waiterId, isActive) => invoke("set_waiter_active", { waiterId, isActive }),
   listReceivables: () => invoke("list_waiter_receivables"),
   listReceivableSales: (waiterId) => invoke("list_waiter_receivable_sales", { waiterId }),
+  listReceivableSaleItems: (waiterId) => invoke("list_waiter_receivable_sale_items", { waiterId }),
   settle: (waiterId) => invoke("settle_waiter", { waiterId }),
 };
 
