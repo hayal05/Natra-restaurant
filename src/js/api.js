@@ -14,6 +14,7 @@ export const waiters = {
   list: (onlyActive) => invoke("list_waiters", { onlyActive }),
   setActive: (waiterId, isActive) => invoke("set_waiter_active", { waiterId, isActive }),
   listReceivables: () => invoke("list_waiter_receivables"),
+  listReceivableSales: (waiterId) => invoke("list_waiter_receivable_sales", { waiterId }),
   settle: (waiterId) => invoke("settle_waiter", { waiterId }),
 };
 
@@ -42,7 +43,7 @@ export const expenses = {
 
 export const pos = {
   checkout: (req) => invoke("checkout", { req }),
-  listSales: (waiterId, limit) => invoke("list_sales", { waiterId: waiterId ?? null, limit }),
+  listSales: (waiterId, from, to, limit) => invoke("list_sales", { waiterId: waiterId ?? null, from: from ?? null, to: to ?? null, limit: limit ?? null }),
   reverseSale: (saleId) => invoke("reverse_sale", { saleId }),
 };
 
