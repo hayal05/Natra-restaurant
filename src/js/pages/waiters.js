@@ -4,7 +4,6 @@ import { setHeaderActions } from "../components/header.js";
 import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
-import { formatDateTime } from "../utils/dates.js";
 import { firstError, isNonEmpty } from "../utils/validation.js";
 
 export const title = "Waiters";
@@ -113,12 +112,12 @@ async function openReceivableSourcesModal(waiter, currency) {
     renderTable(tableHost, {
       columns: [
         { key: "item_name", label: "Item" },
+        { key: "quantity", label: "Qty", numeric: true },
         { key: "unit_price", label: "Unit price", numeric: true, format: (item) => formatMoney(item.unit_price, currency) },
-        { key: "created_at", label: "Date & time", format: (item) => formatDateTime(item.created_at) },
       ],
-      rows: items,
+      rows: groupByItem(items),
       emptyMessage: "No outstanding items for this waiter.",
-      getRowKey: (item) => item.id,
+      getRowKey: (item) => item.item_id,
     });
   } catch {
     tableHost.innerHTML = "";
@@ -127,6 +126,26 @@ async function openReceivableSourcesModal(waiter, currency) {
     error.textContent = "Couldn't load the items for this receivable.";
     tableHost.appendChild(error);
   }
+}
+
+/**
+ * Collapses individual sale-item rows (one per line, possibly repeated
+ * across several sales) down to one row per item: quantity summed, unit
+ * price shown as the weighted average across those lines (equal to the
+ * plain unit price when it hasn't changed between sales).
+ */
+function groupByItem(items) {
+  const byItem = new Map();
+  for (const item of items) {
+    const existing = byItem.get(item.item_id);
+    if (existing) {
+      existing.quantity += item.quantity;
+      existing.line_total += item.line_total;
+    } else {
+      byItem.set(item.item_id, { item_id: item.item_id, item_name: item.item_name, quantity: item.quantity, line_total: item.line_total });
+    }
+  }
+  return Array.from(byItem.values()).map((row) => ({ ...row, unit_price: row.line_total / row.quantity }));
 }
 
 function openAddWaiterModal(els) {
