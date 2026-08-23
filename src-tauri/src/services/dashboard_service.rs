@@ -6,7 +6,7 @@
 //! service composes the existing `financial_service`, `report_service`,
 //! and `waiter_service` building blocks into one payload.
 
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, NaiveDate, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -15,13 +15,18 @@ use crate::services::financial_service::{self, ProfitSummary};
 use crate::services::report_service::{self, DailyTrendEntry, MonthlyCostRevenueEntry, ProductPerformance, SalesMixEntry};
 use crate::services::waiter_service::{self, WaiterReceivable};
 
+// `sales.created_at` (and `expense_date` / `purchase_date`) are stamped by
+// SQLite's `datetime('now')`, which is always UTC. The boundaries we compare
+// against here must therefore also be in UTC - using the machine's local
+// time (as this used to) would misclassify sales made in the first few
+// hours of a new day/month for any restaurant not on UTC.
 fn today_range() -> (String, String) {
-    let today = Local::now().date_naive();
+    let today = Utc::now().date_naive();
     (format!("{today} 00:00:00"), format!("{today} 23:59:59"))
 }
 
 fn this_month_range() -> AppResult<(String, String)> {
-    let now = Local::now().date_naive();
+    let now = Utc::now().date_naive();
     let start = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
         .ok_or_else(|| AppError::Internal("failed to compute month start".into()))?;
     Ok((format!("{start} 00:00:00"), format!("{now} 23:59:59")))

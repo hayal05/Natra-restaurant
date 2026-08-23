@@ -46,9 +46,11 @@ pub fn list_expenses(conn: &Connection, from: Option<&str>, to: Option<&str>) ->
 pub struct ProfitSummary { pub sales: f64, pub ready_made_costs: f64, pub raw_material_costs: f64, pub other_expenses: f64, pub profit: f64 }
 
 pub fn calculate_profit(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<ProfitSummary> {
+    // is_reversed = 0 excludes voided sales (see sales_service::reverse_sale)
+    // from every revenue/cost figure.
     let (sales, ready_made_costs): (f64, f64) = match (from, to) {
-        (Some(f), Some(t)) => conn.query_row("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(total_cost),0) FROM sales WHERE created_at BETWEEN ?1 AND ?2", [f, t], |row| Ok((row.get(0)?, row.get(1)?)))?,
-        _ => conn.query_row("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(total_cost),0) FROM sales", [], |row| Ok((row.get(0)?, row.get(1)?)))?,
+        (Some(f), Some(t)) => conn.query_row("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(total_cost),0) FROM sales WHERE is_reversed = 0 AND created_at BETWEEN ?1 AND ?2", [f, t], |row| Ok((row.get(0)?, row.get(1)?)))?,
+        _ => conn.query_row("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(total_cost),0) FROM sales WHERE is_reversed = 0", [], |row| Ok((row.get(0)?, row.get(1)?)))?,
     };
     let raw_material_costs = raw_material_service::total_cost(conn, from, to)?;
     let other_expenses: f64 = match (from, to) {

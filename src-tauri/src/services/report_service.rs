@@ -27,11 +27,13 @@ pub struct ProductPerformance { pub item_id: i64, pub item_name: String, pub ite
 pub fn product_performance(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<ProductPerformance>> {
     let base_sql = "SELECT si.item_id, si.item_name, si.item_type, SUM(si.quantity) AS quantity_sold, SUM(si.line_total) AS total_sales, SUM(si.line_cost) AS total_cost FROM sale_items si JOIN sales s ON s.id = si.sale_id {WHERE} GROUP BY si.item_id, si.item_name, si.item_type ORDER BY total_sales DESC";
 
+    // s.is_reversed = 0 excludes voided sales (see sales_service::reverse_sale)
+    // from product performance / sales mix, same as every other revenue figure.
     // Keep the prepared statement alive for the entire query_map/collect operation.
     // This explicit scope also avoids rusqlite borrow/lifetime errors on newer Rust.
     match (from, to) {
         (Some(f), Some(t)) => {
-            let sql = base_sql.replace("{WHERE}", "WHERE s.created_at BETWEEN ?1 AND ?2");
+            let sql = base_sql.replace("{WHERE}", "WHERE s.is_reversed = 0 AND s.created_at BETWEEN ?1 AND ?2");
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map(rusqlite::params![f, t], map_product_performance)?
@@ -39,7 +41,7 @@ pub fn product_performance(conn: &Connection, from: Option<&str>, to: Option<&st
             Ok(rows)
         }
         _ => {
-            let sql = base_sql.replace("{WHERE}", "");
+            let sql = base_sql.replace("{WHERE}", "WHERE s.is_reversed = 0");
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
                 .query_map([], map_product_performance)?
@@ -66,7 +68,9 @@ pub fn sales_mix(conn: &Connection, from: Option<&str>, to: Option<&str>) -> App
 pub struct DailyTrendEntry { pub date: String, pub revenue: f64, pub profit: f64 }
 
 pub fn daily_profit_trend(conn: &Connection, days: i64) -> AppResult<Vec<DailyTrendEntry>> {
-    let today = chrono::Local::now().date_naive();
+    // sales.created_at is stamped in UTC by SQLite's datetime('now'); the
+    // day boundaries compared against it must be computed in UTC too.
+    let today = chrono::Utc::now().date_naive();
     let start = today - chrono::Duration::days(days - 1);
     let mut out = Vec::with_capacity(days as usize);
     let mut day = start;
@@ -84,7 +88,7 @@ pub fn daily_profit_trend(conn: &Connection, days: i64) -> AppResult<Vec<DailyTr
 pub struct MonthlyCostRevenueEntry { pub year: i32, pub month: u32, pub revenue: f64, pub cost: f64 }
 
 pub fn monthly_cost_revenue_trend(conn: &Connection, months: u32) -> AppResult<Vec<MonthlyCostRevenueEntry>> {
-    let today = chrono::Local::now().date_naive();
+    let today = chrono::Utc::now().date_naive();
     let (mut year, mut month) = (today.year(), today.month());
     let mut entries = Vec::with_capacity(months as usize);
     for _ in 0..months {

@@ -25,7 +25,8 @@ pub fn set_waiter_active(conn: &Connection, waiter_id: i64, is_active: bool) -> 
 }
 
 pub fn get_receivable(conn: &Connection, waiter_id: i64) -> AppResult<f64> {
-    let total: Option<f64> = conn.query_row("SELECT SUM(total_amount) FROM sales WHERE waiter_id = ?1 AND is_settled = 0", [waiter_id], |row| row.get(0))?;
+    // Reversed sales never counted as owed by the waiter in the first place.
+    let total: Option<f64> = conn.query_row("SELECT SUM(total_amount) FROM sales WHERE waiter_id = ?1 AND is_settled = 0 AND is_reversed = 0", [waiter_id], |row| row.get(0))?;
     Ok(total.unwrap_or(0.0))
 }
 

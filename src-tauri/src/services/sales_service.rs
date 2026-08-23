@@ -7,6 +7,7 @@
 //! half-written: if any line references a missing/inactive item, the
 //! whole sale is rejected and nothing is saved.
 
+use chrono::{NaiveDateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,9 @@ use crate::database::transactions::with_transaction;
 use crate::errors::{AppError, AppResult};
 use crate::models::item::ItemType;
 use crate::models::{PaymentMethod, Sale, SaleItem};
+
+/// A sale can only be reversed within this many hours of being made.
+pub const REVERSAL_WINDOW_HOURS: i64 = 24;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CartLine {
@@ -166,6 +170,41 @@ pub fn list_sales(conn: &Connection, waiter_id: Option<i64>, limit: i64) -> AppR
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+/// Reverse (void) a sale, but only within `REVERSAL_WINDOW_HOURS` of when
+/// it was made. The row is kept — not deleted — with `is_reversed` set, so
+/// it still appears in sales history for audit purposes, but every
+/// revenue/cost/profit calculation and waiter-receivable total excludes it
+/// (see the `is_reversed = 0` filters in financial_service, waiter_service,
+/// and report_service).
+pub fn reverse_sale(conn: &Connection, sale_id: i64) -> AppResult<Sale> {
+    let sale = conn
+        .query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)
+        .map_err(|_| AppError::NotFound(format!("sale {sale_id}")))?;
+
+    if sale.is_reversed {
+        return Err(AppError::Validation("this sale has already been reversed".into()));
+    }
+
+    // created_at is stored in UTC (SQLite's datetime('now')); compare
+    // against UTC "now" to match, same reasoning as the dashboard/report
+    // date-boundary fix.
+    let created_at = NaiveDateTime::parse_from_str(&sale.created_at, "%Y-%m-%d %H:%M:%S")
+        .map_err(|_| AppError::Internal("could not parse sale timestamp".into()))?;
+    let age_hours = (Utc::now().naive_utc() - created_at).num_hours();
+    if age_hours >= REVERSAL_WINDOW_HOURS {
+        return Err(AppError::Validation(format!(
+            "sales can only be reversed within {REVERSAL_WINDOW_HOURS} hours of the sale"
+        )));
+    }
+
+    conn.execute(
+        "UPDATE sales SET is_reversed = 1, reversed_at = datetime('now') WHERE id = ?1",
+        [sale_id],
+    )?;
+
+    Ok(conn.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +304,67 @@ mod tests {
             note: None,
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn reversing_a_recent_sale_marks_it_reversed_and_drops_the_receivable() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let cola = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(0.5), selling_price: 2.0,
+        }).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: cola.id, quantity: 4 }],
+            note: None,
+        }).unwrap();
+        assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 8.0);
+
+        let reversed = reverse_sale(&conn, result.sale.id).unwrap();
+        assert!(reversed.is_reversed);
+        assert!(reversed.reversed_at.is_some());
+        assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn reversing_an_already_reversed_sale_is_rejected() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let cola = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(0.5), selling_price: 2.0,
+        }).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: cola.id, quantity: 1 }],
+            note: None,
+        }).unwrap();
+        reverse_sale(&conn, result.sale.id).unwrap();
+        assert!(reverse_sale(&conn, result.sale.id).is_err());
+    }
+
+    #[test]
+    fn reversing_a_sale_older_than_the_window_is_rejected() {
+        let conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let cola = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(0.5), selling_price: 2.0,
+        }).unwrap();
+        conn.execute(
+            "INSERT INTO sales (waiter_id, total_quantity, total_amount, total_cost, total_profit, payment_method, created_at)
+             VALUES (?1, 1, 2.0, 0.5, 1.5, 'cash', datetime('now', '-25 hours'))",
+            [waiter.id],
+        ).unwrap();
+        let sale_id = conn.last_insert_rowid();
+        let _ = cola; // item not needed further; kept for readability of the setup
+        assert!(reverse_sale(&conn, sale_id).is_err());
+    }
+
+    #[test]
+    fn reversing_a_nonexistent_sale_is_rejected() {
+        let conn = db();
+        assert!(reverse_sale(&conn, 9999).is_err());
     }
 }
