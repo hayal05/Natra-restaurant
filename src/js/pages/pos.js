@@ -7,7 +7,7 @@ import { store, pushToast, withErrorToast } from "../state.js";
 import { clearHeaderActions } from "../components/header.js";
 import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
-import { formatMoney } from "../utils/currency.js";
+import { formatMoney, formatNumber } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
 import { todayIso, daysAgoIso, dateRange, formatDateTime } from "../utils/dates.js";
 
@@ -199,7 +199,7 @@ export async function render(container) {
 
       const priceCell = document.createElement("td");
       priceCell.className = "col-numeric";
-      priceCell.textContent = formatMoney(itemPrice(line.item), currency);
+      priceCell.textContent = formatNumber(itemPrice(line.item));
 
       const qtyCell = document.createElement("td");
       qtyCell.className = "col-numeric";
@@ -208,8 +208,9 @@ export async function render(container) {
 
       const dec = document.createElement("button");
       dec.type = "button";
-      dec.className = "btn btn-ghost btn-sm";
+      dec.className = "btn btn-ghost pos-qty-step";
       dec.textContent = "-";
+      dec.setAttribute("aria-label", "Decrease quantity");
       dec.addEventListener("click", () => changeQuantity(line.item, -1));
 
       const input = document.createElement("input");
@@ -222,8 +223,9 @@ export async function render(container) {
 
       const inc = document.createElement("button");
       inc.type = "button";
-      inc.className = "btn btn-ghost btn-sm";
+      inc.className = "btn btn-ghost pos-qty-step";
       inc.textContent = "+";
+      inc.setAttribute("aria-label", "Increase quantity");
       inc.addEventListener("click", () => changeQuantity(line.item, 1));
 
       controls.append(dec, input, inc);
@@ -231,7 +233,7 @@ export async function render(container) {
 
       const totalCell = document.createElement("td");
       totalCell.className = "col-numeric";
-      totalCell.textContent = formatMoney(lineTotal(line), currency);
+      totalCell.textContent = formatNumber(lineTotal(line));
 
       tr.append(itemCell, priceCell, qtyCell, totalCell);
       tbody.appendChild(tr);
