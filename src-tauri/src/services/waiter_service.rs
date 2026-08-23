@@ -2,7 +2,7 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
-use crate::models::{Sale, Waiter};
+use crate::models::{Sale, SaleItem, Waiter};
 
 pub fn create_waiter(conn: &Connection, full_name: &str, phone: Option<&str>, profile_photo: Option<&str>) -> AppResult<Waiter> {
     if full_name.trim().is_empty() { return Err(AppError::Validation("waiter name is required".into())); }
@@ -39,6 +39,21 @@ pub fn list_receivable_sales(conn: &Connection, waiter_id: i64) -> AppResult<Vec
         "SELECT * FROM sales WHERE waiter_id = ?1 AND is_settled = 0 AND is_reversed = 0 ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([waiter_id], Sale::from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// The individual line items behind a waiter's current receivable — same
+/// `is_settled = 0 AND is_reversed = 0` filter as `get_receivable`, joined
+/// down to item level so the UI can show what was actually sold, its unit
+/// price, and when, instead of just a per-sale total.
+pub fn list_receivable_sale_items(conn: &Connection, waiter_id: i64) -> AppResult<Vec<SaleItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT sale_items.* FROM sale_items \
+         JOIN sales ON sales.id = sale_items.sale_id \
+         WHERE sales.waiter_id = ?1 AND sales.is_settled = 0 AND sales.is_reversed = 0 \
+         ORDER BY sales.created_at DESC, sale_items.id ASC",
+    )?;
+    let rows = stmt.query_map([waiter_id], SaleItem::from_row)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
