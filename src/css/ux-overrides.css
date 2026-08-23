@@ -63,13 +63,38 @@
 .print-sheet-header p { font-size: var(--text-sm); color: var(--color-ink-soft); margin-top: var(--space-1); }
 
 @media print {
+  @page { size: auto; margin: 12mm; }
   #app { display: none !important; }
   #daily-print-sheet {
     display: block !important;
-    padding: 0.5in;
+    width: 100%;
+    padding: 0;
     background: #fff;
   }
-  #daily-print-sheet .ticket-card,
-  #daily-print-sheet .table-wrap { box-shadow: none !important; }
+  /* The on-screen table forces a wide min-width so it can scroll
+     horizontally inside a card; print has no scrolling, so let it
+     shrink to the page width instead of clipping the right columns. */
+  #daily-print-sheet .table-wrap {
+    overflow: visible !important;
+    box-shadow: none !important;
+    border-color: #ccc;
+    width: 100%;
+    max-width: 100%;
+  }
+  #daily-print-sheet .data-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed;
+    font-size: 9.5px;
+  }
+  #daily-print-sheet .data-table th,
+  #daily-print-sheet .data-table td {
+    padding: 4px 6px;
+    white-space: normal;
+    word-break: break-word;
+    position: static;
+  }
+  #daily-print-sheet .ticket-card { box-shadow: none !important; border-color: #ccc; }
   #daily-print-sheet .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #daily-print-sheet .report-product-group { page-break-inside: avoid; }
 }
