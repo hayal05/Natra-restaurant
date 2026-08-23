@@ -2,7 +2,7 @@
 use tauri::State;
 use crate::database::Db;
 use crate::errors::AppResult;
-use crate::models::{Sale, Waiter};
+use crate::models::{Sale, SaleItem, Waiter};
 use crate::services::waiter_service::{self, WaiterReceivable};
 
 #[tauri::command]
@@ -36,6 +36,15 @@ pub fn list_waiter_receivables(db: State<Db>) -> AppResult<Vec<WaiterReceivable>
 pub fn list_waiter_receivable_sales(db: State<Db>, waiter_id: i64) -> AppResult<Vec<Sale>> {
     let conn = db.lock();
     waiter_service::list_receivable_sales(&conn, waiter_id)
+}
+
+/// The individual items behind a waiter's current receivable — same rows
+/// `list_waiter_receivable_sales` sums, broken down to item/unit-price
+/// level for the "view sources" popup.
+#[tauri::command]
+pub fn list_waiter_receivable_sale_items(db: State<Db>, waiter_id: i64) -> AppResult<Vec<SaleItem>> {
+    let conn = db.lock();
+    waiter_service::list_receivable_sale_items(&conn, waiter_id)
 }
 
 #[tauri::command]
