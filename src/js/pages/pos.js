@@ -6,8 +6,23 @@ import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { clearHeaderActions } from "../components/header.js";
 import { renderTable } from "../components/table.js";
+import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
+
+// Sales can only be reversed within this many hours of being made — must
+// match sales_service::REVERSAL_WINDOW_HOURS on the backend, which is the
+// real enforcement point; this is only used to gray out the button early.
+const REVERSAL_WINDOW_HOURS = 24;
+
+// sale.created_at is stored by SQLite as a UTC "YYYY-MM-DD HH:MM:SS" string
+// with no timezone marker, so it must be parsed as UTC explicitly here.
+function saleAgeHours(sale) {
+  const raw = String(sale.created_at || "").replace(" ", "T");
+  const parsed = new Date(raw.endsWith("Z") ? raw : `${raw}Z`);
+  if (Number.isNaN(parsed.getTime())) return Infinity;
+  return (Date.now() - parsed.getTime()) / 3_600_000;
+}
 
 export const title = "Point of sale";
 let cart = new Map();
@@ -249,8 +264,12 @@ export async function render(container) {
       const sales = await withErrorToast(() => api.pos.listSales(null, 200));
       const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === localDateKey());
       const waiterById = new Map(allWaiters.map((w) => [w.id, w.full_name]));
-      const total = todaySales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
-      dailyHistoryTotalEl.textContent = `${todaySales.length} sale${todaySales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
+      // Reversed sales stay visible in the history list (with a "Reversed"
+      // badge) for audit purposes, but shouldn't count toward today's total,
+      // matching how the backend excludes them from every revenue figure.
+      const activeSales = todaySales.filter((sale) => !sale.is_reversed);
+      const total = activeSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+      dailyHistoryTotalEl.textContent = `${activeSales.length} sale${activeSales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
       renderTable(table, {
         columns: [
           { key: "created_at", label: "Time", format: (sale) => { const value = String(sale.created_at || ""); return value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16) || "-"; } },
@@ -258,12 +277,47 @@ export async function render(container) {
           { key: "total_quantity", label: "Qty", numeric: true },
           { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
           { key: "total_amount", label: "Total", numeric: true, format: (sale) => formatMoney(sale.total_amount, currency) },
-          { key: "is_settled", label: "Status", format: (sale) => { const badge = document.createElement("span"); badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`; badge.textContent = sale.is_settled ? "Settled" : "Open"; return badge; } },
+          { key: "is_settled", label: "Status", format: (sale) => {
+            if (sale.is_reversed) { const badge = document.createElement("span"); badge.className = "badge badge-rust"; badge.textContent = "Reversed"; return badge; }
+            const badge = document.createElement("span"); badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`; badge.textContent = sale.is_settled ? "Settled" : "Open"; return badge;
+          } },
+          { key: "actions", label: "", format: (sale) => {
+            if (sale.is_reversed) return "";
+            const btn = document.createElement("button");
+            btn.className = "btn btn-ghost btn-sm";
+            btn.textContent = "Reverse";
+            const withinWindow = saleAgeHours(sale) < REVERSAL_WINDOW_HOURS;
+            if (!withinWindow) { btn.disabled = true; btn.title = `Sales can only be reversed within ${REVERSAL_WINDOW_HOURS} hours.`; }
+            btn.addEventListener("click", () => confirmReverseSale(sale));
+            return btn;
+          } },
         ], rows: todaySales, emptyMessage: "No sales recorded today yet.", getRowKey: (sale) => sale.id,
       });
     } catch {
       dailyHistoryTotalEl.textContent = "";
     }
+  }
+
+  function confirmReverseSale(sale) {
+    const body = document.createElement("div");
+    body.innerHTML = `<p style="font-size:var(--text-sm);color:var(--color-ink-soft);">This voids the sale of <strong>${formatMoney(sale.total_amount, currency)}</strong> and removes it from revenue, cost, and waiter-receivable totals. The record stays in history, marked as reversed. This can't be undone.</p>`;
+    const cancel = document.createElement("button");
+    cancel.className = "btn btn-secondary"; cancel.type = "button"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", closeModal);
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "btn btn-danger"; confirmBtn.type = "button"; confirmBtn.textContent = "Reverse sale";
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await withErrorToast(() => api.pos.reverseSale(sale.id));
+        pushToast("Sale reversed.", "success");
+        closeModal();
+        await renderDailyHistory();
+      } catch {
+        confirmBtn.disabled = false;
+      }
+    });
+    openModal({ title: "Reverse this sale?", content: body, actions: [cancel, confirmBtn] });
   }
 
   typeFilter.addEventListener("change", renderItemTable);
