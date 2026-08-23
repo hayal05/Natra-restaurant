@@ -62,3 +62,19 @@ export function monthRange(year, month) {
   const end = `${year}-${pad(month)}-${pad(lastDay)}`;
   return [`${start} 00:00:00`, `${end} 23:59:59`];
 }
+
+/**
+ * Inclusive ['YYYY-MM-DD 00:00:00', 'YYYY-MM-DD 23:59:59'] range for two
+ * 'YYYY-MM-DD' date-input values — same boundary convention as
+ * `monthRange`, just for an arbitrary from/to pair (a single day when
+ * `fromDate === toDate`).
+ */
+export function dateRange(fromDate, toDate) {
+  return [`${fromDate} 00:00:00`, `${toDate} 23:59:59`];
+}
+
+/** 'YYYY-MM-DD' -> the same date `days` earlier, as 'YYYY-MM-DD', in local time. */
+export function daysAgoIso(days, from = new Date()) {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() - days);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
