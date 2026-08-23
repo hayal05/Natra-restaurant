@@ -28,8 +28,9 @@ export async function render(container) {
       <div class="card-header"><span class="card-title">General</span></div>
       <form id="general-form" novalidate>
         <div class="field">
-          <label class="field-label" for="restaurant-name">Restaurant name</label>
+          <label class="field-label" for="restaurant-name">Company name</label>
           <input class="input" id="restaurant-name" type="text" />
+          <span class="field-hint">Shown in the middle of the top bar on every page.</span>
           <span class="field-error" id="restaurant-name-error"></span>
         </div>
         <div class="field">
@@ -106,7 +107,7 @@ export async function render(container) {
     const currency = els.currencyInput.value.trim().toUpperCase();
 
     const error = firstError([
-      [isNonEmpty(restaurantName), "Enter a restaurant name."],
+      [isNonEmpty(restaurantName), "Enter a company name."],
       [isNonEmpty(currency), "Enter a currency code."],
     ]);
     if (error) {
