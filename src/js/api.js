@@ -43,6 +43,7 @@ export const expenses = {
 export const pos = {
   checkout: (req) => invoke("checkout", { req }),
   listSales: (waiterId, limit) => invoke("list_sales", { waiterId: waiterId ?? null, limit }),
+  reverseSale: (saleId) => invoke("reverse_sale", { saleId }),
 };
 
 export const reports = {
