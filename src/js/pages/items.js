@@ -9,6 +9,7 @@ export const title = "Items";
 let itemCache = new Map();
 
 const NAVY_BUTTON_STYLE = "background:#0b2a4a;color:#fff;border-color:#0b2a4a;";
+const PENCIL_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
 
 export async function render(container) {
   container.innerHTML = `
@@ -118,7 +119,7 @@ async function loadItems(els, categories = []) {
       { key: "purchase_cost", label: "Unit cost", numeric: true, format: (item) => item.purchase_cost == null ? "Raw materials" : formatMoney(item.purchase_cost, currency) },
       { key: "selling_price", label: "Selling price", numeric: true, format: (item) => formatMoney(item.selling_price, currency) },
       { key: "status", label: "Status", format: (item) => { const b = document.createElement("span"); b.className = `badge ${item.is_active ? "badge-sage" : "badge-neutral"}`; b.textContent = item.is_active ? "Active" : "Inactive"; return b; } },
-      { key: "actions", label: "Actions", format: (item) => { const actions = document.createElement("div"); actions.className = "row-actions"; const edit = document.createElement("button"); edit.className = "btn btn-secondary btn-sm"; edit.textContent = "Edit pricing"; edit.addEventListener("click", () => openPricingModal(els, item, categories)); actions.appendChild(edit); const toggle = document.createElement("button"); toggle.className = "btn btn-ghost btn-sm"; toggle.textContent = item.is_active ? "Deactivate" : "Activate"; toggle.addEventListener("click", async () => { try { await withErrorToast(() => api.items.setActive(item.id, !item.is_active)); item.is_active = !item.is_active; itemCache.set(item.id, item); await loadItems(els, categories); } catch {} }); actions.appendChild(toggle); return actions; } },
+      { key: "actions", label: "Actions", format: (item) => { const actions = document.createElement("div"); actions.className = "row-actions"; const edit = document.createElement("button"); edit.className = "btn btn-secondary btn-sm btn-icon"; edit.type = "button"; edit.title = "Edit pricing"; edit.setAttribute("aria-label", "Edit pricing"); edit.innerHTML = PENCIL_ICON; edit.addEventListener("click", () => openPricingModal(els, item, categories)); actions.appendChild(edit); const toggle = document.createElement("button"); toggle.className = "btn btn-ghost btn-sm"; toggle.textContent = item.is_active ? "Deactivate" : "Activate"; toggle.addEventListener("click", async () => { try { await withErrorToast(() => api.items.setActive(item.id, !item.is_active)); item.is_active = !item.is_active; itemCache.set(item.id, item); await loadItems(els, categories); } catch {} }); actions.appendChild(toggle); return actions; } },
     ], rows: items, emptyMessage: "No items yet — add your first menu item to start selling.", getRowKey: (item) => item.id,
   });
 }
