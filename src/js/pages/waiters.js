@@ -5,7 +5,6 @@ import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
 import { formatDateTime } from "../utils/dates.js";
-import { humanizeEnum } from "../utils/formatting.js";
 import { firstError, isNonEmpty } from "../utils/validation.js";
 
 export const title = "Waiters";
@@ -90,7 +89,7 @@ function waiterIdentity(waiter) {
 }
 
 /**
- * Shows the individual unsettled, non-reversed sales that add up to a
+ * Shows the individual unsettled, non-reversed sale items that add up to a
  * waiter's receivable total — same rows `waiter_service::get_receivable`
  * sums, fetched fresh so this always matches the amount shown next to it.
  */
@@ -106,32 +105,26 @@ async function openReceivableSourcesModal(waiter, currency) {
   const close = document.createElement("button");
   close.className = "btn btn-secondary"; close.type = "button"; close.textContent = "Close";
   close.addEventListener("click", closeModal);
-  openModal({ title: `Receivable sources — ${waiter.full_name}`, content: body, actions: [close] });
+  openModal({ title: waiter.full_name, content: body, actions: [close] });
 
   try {
-    const sales = await withErrorToast(() => api.waiters.listReceivableSales(waiter.id));
-    const total = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+    const items = await withErrorToast(() => api.waiters.listReceivableSaleItems(waiter.id));
     tableHost.innerHTML = "";
-    const summary = document.createElement("p");
-    summary.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);margin-bottom:var(--space-3);";
-    summary.textContent = `${sales.length} unsettled sale${sales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
-    body.insertBefore(summary, tableHost);
     renderTable(tableHost, {
       columns: [
-        { key: "created_at", label: "Date & time", format: (sale) => formatDateTime(sale.created_at) },
-        { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
-        { key: "total_quantity", label: "Qty", numeric: true },
-        { key: "total_amount", label: "Total", numeric: true, format: (sale) => formatMoney(sale.total_amount, currency) },
+        { key: "item_name", label: "Item" },
+        { key: "unit_price", label: "Unit price", numeric: true, format: (item) => formatMoney(item.unit_price, currency) },
+        { key: "created_at", label: "Date & time", format: (item) => formatDateTime(item.created_at) },
       ],
-      rows: sales,
-      emptyMessage: "No outstanding sales for this waiter.",
-      getRowKey: (sale) => sale.id,
+      rows: items,
+      emptyMessage: "No outstanding items for this waiter.",
+      getRowKey: (item) => item.id,
     });
   } catch {
     tableHost.innerHTML = "";
     const error = document.createElement("p");
     error.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);";
-    error.textContent = "Couldn't load the sales for this receivable.";
+    error.textContent = "Couldn't load the items for this receivable.";
     tableHost.appendChild(error);
   }
 }
