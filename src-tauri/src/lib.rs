@@ -71,6 +71,7 @@ pub fn run() {
             commands::expenses::calculate_profit,
             commands::pos::checkout,
             commands::pos::list_sales,
+            commands::pos::reverse_sale,
             commands::reports::monthly_report,
             commands::reports::product_performance,
             commands::reports::sales_mix,
