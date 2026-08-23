@@ -15,10 +15,19 @@ pub fn checkout(db: State<Db>, req: CheckoutRequest) -> AppResult<CheckoutResult
     sales_service::checkout(&mut conn, req)
 }
 
+/// `from`/`to` bound the search to a `created_at` window (inclusive), so
+/// the frontend can ask for a single day or an arbitrary date range; both
+/// are optional and `limit` is too — see `sales_service::list_sales`.
 #[tauri::command]
-pub fn list_sales(db: State<Db>, waiter_id: Option<i64>, limit: i64) -> AppResult<Vec<Sale>> {
+pub fn list_sales(
+    db: State<Db>,
+    waiter_id: Option<i64>,
+    from: Option<String>,
+    to: Option<String>,
+    limit: Option<i64>,
+) -> AppResult<Vec<Sale>> {
     let conn = db.lock();
-    sales_service::list_sales(&conn, waiter_id, limit)
+    sales_service::list_sales(&conn, waiter_id, from.as_deref(), to.as_deref(), limit)
 }
 
 /// Void a sale, but only within `sales_service::REVERSAL_WINDOW_HOURS` of
