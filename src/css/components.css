@@ -54,6 +54,20 @@
 .catalog-table .data-table th:first-child,.catalog-table .data-table td:first-child { padding-left:.85rem; }
 .catalog-table .data-table th:last-child,.catalog-table .data-table td:last-child { padding-right:.85rem; }
 
+/* Waiter roster: compact columns, no forced min-width so it fits without horizontal scroll. */
+#waiter-table.data-table,
+#waiter-table .data-table { min-width:0; width:100%; table-layout:fixed; }
+#waiter-table .data-table th,
+#waiter-table .data-table td { padding:.45rem .4rem; }
+#waiter-table .data-table th:first-child,
+#waiter-table .data-table td:first-child { padding-left:.5rem; }
+#waiter-table .data-table th:last-child,
+#waiter-table .data-table td:last-child { padding-right:.5rem; }
+#waiter-table .waiter-identity span,
+#waiter-table .data-table td:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#waiter-table .receivable-cell { gap:.35rem; }
+#waiter-table .row-actions { gap:.25rem; flex-wrap:wrap; justify-content:flex-end; }
+
 .waiter-identity { display:flex; align-items:center; gap:.55rem; min-width:0; }
 .receivable-cell { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; }
 .waiter-avatar { width:2rem; height:2rem; flex:0 0 2rem; border-radius:50%; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#e7f0f9; color:#123f73; font-size:.72rem; font-weight:800; border:1px solid #d3dfeb; }
