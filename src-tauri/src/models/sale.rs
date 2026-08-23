@@ -30,6 +30,12 @@ pub struct Sale {
     pub is_settled: bool,
     pub settled_at: Option<String>,
 
+    /// Reversal (void) flag. A reversed sale is kept for audit history but
+    /// excluded from every revenue/cost/profit calculation and from waiter
+    /// receivables. See `sales_service::reverse_sale` for the 24-hour rule.
+    pub is_reversed: bool,
+    pub reversed_at: Option<String>,
+
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -48,6 +54,8 @@ impl Sale {
             payment_method: row.get("payment_method")?,
             is_settled: row.get("is_settled")?,
             settled_at: row.get("settled_at")?,
+            is_reversed: row.get("is_reversed")?,
+            reversed_at: row.get("reversed_at")?,
             note: row.get("note")?,
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
