@@ -42,7 +42,7 @@
 #cart-lines { min-height:2.5rem; }
 .pos-total { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; margin-top:.9rem; padding-top:.9rem; border-top:1px solid var(--color-border); }
 .pos-qty-controls { display:inline-flex; align-items:center; justify-content:flex-end; gap:.2rem; white-space:nowrap; }
-.pos-qty-controls .input-mono { min-width:1.5rem; text-align:center; }
+.pos-qty-controls .input-mono { min-width:3.25rem; width:3.25rem; text-align:center; }
 .pos-sale-panel .table-wrap { overflow-x:hidden; }
 .pos-sale-panel .data-table { min-width:0; table-layout:fixed; width:100%; }
 .pos-sale-panel .data-table th,.pos-sale-panel .data-table td { padding-inline:.25rem; }
