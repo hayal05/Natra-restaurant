@@ -54,6 +54,7 @@ pub fn run() {
             commands::waiters::list_waiters,
             commands::waiters::set_waiter_active,
             commands::waiters::list_waiter_receivables,
+            commands::waiters::list_waiter_receivable_sales,
             commands::waiters::settle_waiter,
             commands::items::create_category,
             commands::items::list_categories,
