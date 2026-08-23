@@ -15,6 +15,8 @@
 .btn-ghost { background:transparent; color:#66758a; }
 .btn-ghost:hover:not(:disabled) { background:#eaf0f6; color:#172033; }
 .btn-sm { height:1.95rem; padding:0 .65rem; font-size:.72rem; }
+.btn-icon { padding:0; width:1.95rem; flex:0 0 1.95rem; }
+.btn-icon svg { width:.95rem; height:.95rem; }
 .badge { display:inline-flex; align-items:center; padding:3px 8px; border-radius:4px; font-size:.68rem; font-weight:700; }
 .badge-sage { background:#e5f6ef; color:#0d6247; }
 .badge-rust { background:#fdebec; color:#a92e2e; }
