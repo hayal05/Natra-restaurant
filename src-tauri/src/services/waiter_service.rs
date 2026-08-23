@@ -2,7 +2,7 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
-use crate::models::Waiter;
+use crate::models::{Sale, Waiter};
 
 pub fn create_waiter(conn: &Connection, full_name: &str, phone: Option<&str>, profile_photo: Option<&str>) -> AppResult<Waiter> {
     if full_name.trim().is_empty() { return Err(AppError::Validation("waiter name is required".into())); }
@@ -28,6 +28,18 @@ pub fn get_receivable(conn: &Connection, waiter_id: i64) -> AppResult<f64> {
     // Reversed sales never counted as owed by the waiter in the first place.
     let total: Option<f64> = conn.query_row("SELECT SUM(total_amount) FROM sales WHERE waiter_id = ?1 AND is_settled = 0 AND is_reversed = 0", [waiter_id], |row| row.get(0))?;
     Ok(total.unwrap_or(0.0))
+}
+
+/// The individual sales that make up a waiter's current receivable — same
+/// `is_settled = 0 AND is_reversed = 0` filter as `get_receivable`, just
+/// returning the rows instead of the sum, so the UI can show *which*
+/// transactions the outstanding amount comes from.
+pub fn list_receivable_sales(conn: &Connection, waiter_id: i64) -> AppResult<Vec<Sale>> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM sales WHERE waiter_id = ?1 AND is_settled = 0 AND is_reversed = 0 ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([waiter_id], Sale::from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
