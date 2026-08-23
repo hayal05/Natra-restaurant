@@ -20,6 +20,7 @@
 .badge-rust { background:#fdebec; color:#a92e2e; }
 .badge-navy { background:#e7f0f9; color:#123f73; }
 .badge-neutral { background:#edf1f5; color:#66758a; }
+.badge-amber { background:#fdf3e0; color:#8a5a10; }
 .card { background:#fff; border:1px solid #d9e2eb; border-radius:7px; padding:1rem; box-shadow:0 2px 7px rgba(15,35,58,.035); }
 .card:hover { box-shadow:0 5px 16px rgba(15,35,58,.055); }
 .card-header { display:flex; align-items:center; justify-content:space-between; gap:.65rem; margin-bottom:.8rem; }
