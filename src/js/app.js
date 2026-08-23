@@ -15,7 +15,7 @@ function buildLayouts() {
   const shell = document.createElement("div"); shell.className="app-shell"; shell.style.display="none";
   shell.innerHTML = `
     <aside class="sidebar"><div class="sidebar-brand"><img src="assets/logo.svg" alt="NATRA"/><span class="sidebar-brand-natra">NATRA</span><span class="sidebar-brand-name">Cashier</span></div><nav class="sidebar-nav" id="sidebar-nav"></nav><div class="sidebar-footer"><div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem"><span id="current-user-label" style="color:var(--color-paper-ink-soft);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span><button id="logout-btn" style="color:var(--color-navy-bright);font-size:var(--text-sm);font-weight:650">Log out</button></div><div style="margin-top:.45rem;color:#6f88a3;font-size:.68rem">NATRA Management</div></div></aside>
-    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-actions" id="header-actions"></div></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
+    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
   appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"));
   shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
@@ -82,7 +82,12 @@ async function bootstrap(){
     const {user}=store.getState();
     if(userLabel)userLabel.textContent=user?user.full_name:"";
   }});
-  store.subscribe(({settings})=>{if(settings)document.title=`${settings.restaurant_name} — NATRA`});
+  store.subscribe(({settings})=>{
+    if(!settings) return;
+    document.title=`${settings.restaurant_name} — NATRA`;
+    const companyEl=shell.querySelector("#header-company");
+    if(companyEl) companyEl.textContent=settings.restaurant_name||"";
+  });
   let initialized=false;try{initialized=await api.auth.isInitialized()}catch(err){pushToast(typeof err==="string"?err:"Couldn't reach the local database.","error",0)}
   if(!initialized){navigate("/setup");return} navigate("/login");
 }
