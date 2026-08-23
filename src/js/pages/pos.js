@@ -9,6 +9,7 @@ import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
+import { todayIso, daysAgoIso, dateRange, formatDateTime } from "../utils/dates.js";
 
 // Sales can only be reversed within this many hours of being made — must
 // match sales_service::REVERSAL_WINDOW_HOURS on the backend, which is the
@@ -52,7 +53,19 @@ export async function render(container) {
         <button class="btn btn-primary" id="checkout-btn" style="width:100%;margin-top:var(--space-4)" disabled>Complete sale</button>
       </div>
     </div>
-    <div class="card pos-daily-history"><div class="card-header"><span class="card-title">Daily sales history</span><span class="pos-history-total" id="daily-history-total"></span></div><div id="daily-sales-table"></div></div>`;
+    <div class="card pos-daily-history">
+      <div class="card-header"><span class="card-title">Sales history</span><span class="pos-history-total" id="daily-history-total"></span></div>
+      <div class="pos-history-filters" style="display:flex;gap:var(--space-2);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-3);">
+        <div class="field" style="margin-top:0"><label class="field-label" for="history-from">From</label><input class="input" type="date" id="history-from" /></div>
+        <div class="field" style="margin-top:0"><label class="field-label" for="history-to">To</label><input class="input" type="date" id="history-to" /></div>
+        <div style="display:flex;gap:var(--space-2)">
+          <button class="btn btn-ghost btn-sm" type="button" id="history-today">Today</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="history-7d">Last 7 days</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="history-30d">Last 30 days</button>
+        </div>
+      </div>
+      <div id="daily-sales-table"></div>
+    </div>`;
 
   const currency = store.getState().settings?.currency ?? "USD";
   const itemTable = container.querySelector("#item-table");
@@ -66,6 +79,11 @@ export async function render(container) {
   const checkoutBtn = container.querySelector("#checkout-btn");
   const dailyHistoryTable = container.querySelector("#daily-sales-table");
   const dailyHistoryTotalEl = container.querySelector("#daily-history-total");
+  const historyFromInput = container.querySelector("#history-from");
+  const historyToInput = container.querySelector("#history-to");
+  const historyTodayBtn = container.querySelector("#history-today");
+  const history7dBtn = container.querySelector("#history-7d");
+  const history30dBtn = container.querySelector("#history-30d");
   // The router renders each page into a detached staging element and only
   // moves its children into the live outlet once render() resolves. `container`
   // itself stays behind, empty, after that move - so every element we'll need
@@ -253,26 +271,48 @@ export async function render(container) {
     if (line) setQuantity(item, line.quantity + delta);
   }
 
-  function localDateKey(date = new Date()) {
-    const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+  // History is browsable across the trailing month; the date pickers are
+  // clamped to that window so "select a date or a range" always lands on
+  // data that's actually kept around.
+  const HISTORY_WINDOW_DAYS = 30;
+  const historyMinDate = daysAgoIso(HISTORY_WINDOW_DAYS);
+  const historyMaxDate = todayIso();
+  [historyFromInput, historyToInput].forEach((input) => {
+    input.min = historyMinDate;
+    input.max = historyMaxDate;
+    input.value = historyMaxDate;
+  });
+
+  function setHistoryRange(fromDate, toDate) {
+    historyFromInput.value = fromDate;
+    historyToInput.value = toDate;
+    renderDailyHistory();
   }
 
   async function renderDailyHistory() {
     const table = dailyHistoryTable;
+    let fromDate = historyFromInput.value || historyMaxDate;
+    let toDate = historyToInput.value || historyMaxDate;
+    // Keep the range sane if the user picks an end before the start.
+    if (fromDate > toDate) [fromDate, toDate] = [toDate, fromDate];
+    const [from, to] = dateRange(fromDate, toDate);
+    const isSingleDay = fromDate === toDate;
+
     try {
-      const sales = await withErrorToast(() => api.pos.listSales(null, 200));
-      const todaySales = sales.filter((sale) => String(sale.created_at || "").slice(0, 10) === localDateKey());
+      const sales = await withErrorToast(() => api.pos.listSales(null, from, to, null));
       const waiterById = new Map(allWaiters.map((w) => [w.id, w.full_name]));
       // Reversed sales stay visible in the history list (with a "Reversed"
-      // badge) for audit purposes, but shouldn't count toward today's total,
-      // matching how the backend excludes them from every revenue figure.
-      const activeSales = todaySales.filter((sale) => !sale.is_reversed);
+      // badge) for audit purposes, but shouldn't count toward the period's
+      // total, matching how the backend excludes them from every revenue figure.
+      const activeSales = sales.filter((sale) => !sale.is_reversed);
       const total = activeSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
       dailyHistoryTotalEl.textContent = `${activeSales.length} sale${activeSales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
       renderTable(table, {
         columns: [
-          { key: "created_at", label: "Time", format: (sale) => { const value = String(sale.created_at || ""); return value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16) || "-"; } },
+          { key: "created_at", label: isSingleDay ? "Time" : "Date & time", format: (sale) => {
+            if (isSingleDay) { const value = String(sale.created_at || ""); return value.includes("T") ? value.split("T")[1].slice(0, 5) : value.slice(11, 16) || "-"; }
+            return formatDateTime(sale.created_at);
+          } },
           { key: "waiter_id", label: "Waiter", format: (sale) => waiterById.get(sale.waiter_id) || `Waiter #${sale.waiter_id}` },
           { key: "total_quantity", label: "Qty", numeric: true },
           { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
@@ -291,7 +331,7 @@ export async function render(container) {
             btn.addEventListener("click", () => confirmReverseSale(sale));
             return btn;
           } },
-        ], rows: todaySales, emptyMessage: "No sales recorded today yet.", getRowKey: (sale) => sale.id,
+        ], rows: sales, emptyMessage: isSingleDay ? "No sales recorded for this day." : "No sales recorded for this period.", getRowKey: (sale) => sale.id,
       });
     } catch {
       dailyHistoryTotalEl.textContent = "";
@@ -322,6 +362,11 @@ export async function render(container) {
 
   typeFilter.addEventListener("change", renderItemTable);
   searchInput.addEventListener("input", renderItemTable);
+  historyFromInput.addEventListener("change", renderDailyHistory);
+  historyToInput.addEventListener("change", renderDailyHistory);
+  historyTodayBtn.addEventListener("click", () => setHistoryRange(historyMaxDate, historyMaxDate));
+  history7dBtn.addEventListener("click", () => setHistoryRange(daysAgoIso(6), historyMaxDate));
+  history30dBtn.addEventListener("click", () => setHistoryRange(historyMinDate, historyMaxDate));
   renderItemTable();
   renderCart();
   await renderDailyHistory();

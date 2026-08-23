@@ -4,6 +4,8 @@ import { setHeaderActions } from "../components/header.js";
 import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney } from "../utils/currency.js";
+import { formatDateTime } from "../utils/dates.js";
+import { humanizeEnum } from "../utils/formatting.js";
 import { firstError, isNonEmpty } from "../utils/validation.js";
 
 export const title = "Waiters";
@@ -53,7 +55,24 @@ async function loadWaiters(els) {
       { key: "full_name", label: "Waiter", format: (w) => waiterIdentity(w) },
       { key: "phone", label: "Phone", format: (w) => w.phone || "—" },
       { key: "status", label: "Status", format: (w) => { const b=document.createElement("span"); b.className=`badge ${w.is_active?"badge-sage":"badge-neutral"}`; b.textContent=w.is_active?"Active":"Inactive"; return b; } },
-      { key: "receivable", label: "Receivable", numeric: true, format: (w) => formatMoney(receivableMap.get(w.id) ?? 0, currency) },
+      { key: "receivable", label: "Receivable", numeric: true, format: (w) => {
+        const receivable = receivableMap.get(w.id) ?? 0;
+        const cell = document.createElement("div");
+        cell.className = "receivable-cell";
+        const amount = document.createElement("span");
+        amount.textContent = formatMoney(receivable, currency);
+        cell.appendChild(amount);
+        if (receivable > 0) {
+          const viewBtn = document.createElement("button");
+          viewBtn.className = "btn btn-ghost btn-sm";
+          viewBtn.type = "button";
+          viewBtn.textContent = "View";
+          viewBtn.title = "View the sales this receivable comes from";
+          viewBtn.addEventListener("click", () => openReceivableSourcesModal(w, currency));
+          cell.appendChild(viewBtn);
+        }
+        return cell;
+      } },
       { key: "actions", label: "Actions", format: (w) => {
         const actions=document.createElement("div"); actions.className="row-actions"; const receivable=receivableMap.get(w.id)??0;
         if(receivable>0){ const b=document.createElement("button"); b.className="btn btn-secondary btn-sm"; b.textContent="Settle"; b.addEventListener("click",async()=>{try{await withErrorToast(()=>api.waiters.settle(w.id));pushToast("Waiter settled.","success");loadWaiters(els);}catch{}}); actions.appendChild(b); }
@@ -68,6 +87,53 @@ function waiterIdentity(waiter) {
   const avatar=document.createElement("div"); avatar.className="waiter-avatar";
   if(waiter.profile_photo){ avatar.innerHTML=`<img src="${escapeAttr(waiter.profile_photo)}" alt="" />`; } else { avatar.textContent=(waiter.full_name||"?").trim().charAt(0).toUpperCase(); }
   const name=document.createElement("span"); name.textContent=waiter.full_name; wrap.append(avatar,name); return wrap;
+}
+
+/**
+ * Shows the individual unsettled, non-reversed sales that add up to a
+ * waiter's receivable total — same rows `waiter_service::get_receivable`
+ * sums, fetched fresh so this always matches the amount shown next to it.
+ */
+async function openReceivableSourcesModal(waiter, currency) {
+  const body = document.createElement("div");
+  const tableHost = document.createElement("div");
+  body.appendChild(tableHost);
+  const loading = document.createElement("p");
+  loading.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);";
+  loading.textContent = "Loading...";
+  tableHost.appendChild(loading);
+
+  const close = document.createElement("button");
+  close.className = "btn btn-secondary"; close.type = "button"; close.textContent = "Close";
+  close.addEventListener("click", closeModal);
+  openModal({ title: `Receivable sources — ${waiter.full_name}`, content: body, actions: [close] });
+
+  try {
+    const sales = await withErrorToast(() => api.waiters.listReceivableSales(waiter.id));
+    const total = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+    tableHost.innerHTML = "";
+    const summary = document.createElement("p");
+    summary.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);margin-bottom:var(--space-3);";
+    summary.textContent = `${sales.length} unsettled sale${sales.length === 1 ? "" : "s"} - ${formatMoney(total, currency)}`;
+    body.insertBefore(summary, tableHost);
+    renderTable(tableHost, {
+      columns: [
+        { key: "created_at", label: "Date & time", format: (sale) => formatDateTime(sale.created_at) },
+        { key: "payment_method", label: "Payment", format: (sale) => humanizeEnum(sale.payment_method) },
+        { key: "total_quantity", label: "Qty", numeric: true },
+        { key: "total_amount", label: "Total", numeric: true, format: (sale) => formatMoney(sale.total_amount, currency) },
+      ],
+      rows: sales,
+      emptyMessage: "No outstanding sales for this waiter.",
+      getRowKey: (sale) => sale.id,
+    });
+  } catch {
+    tableHost.innerHTML = "";
+    const error = document.createElement("p");
+    error.style.cssText = "font-size:var(--text-sm);color:var(--color-ink-soft);";
+    error.textContent = "Couldn't load the sales for this receivable.";
+    tableHost.appendChild(error);
+  }
 }
 
 function openAddWaiterModal(els) {
