@@ -1,5 +1,7 @@
 /* Focused workspace scrolling overrides
    - POS item browsing scrolls inside the item table only.
+   - POS Current sale panel scrolls inside its own cart list only, while the
+     waiter/payment fields, heading, total and checkout button stay pinned.
    - Daily sales history stays outside that scroll region.
    - Dashboard waiter receivables show four rows, then scroll internally.
    - The revenue/profit charts remain in the normal dashboard flow and are
@@ -8,6 +10,37 @@
 .pos-layout { overflow: hidden; }
 .pos-items-table .table-wrap { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .pos-daily-history { flex: 0 0 auto; }
+
+/* Current sale: pin the panel to the same height as the items card and let
+   only the cart list scroll internally, so a long cart never pushes the
+   waiter/payment fields or the checkout button out of view. */
+.pos-sale-panel {
+  position: static;
+  align-self: stretch;
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pos-sale-panel > .card-header,
+.pos-sale-panel > .field,
+.pos-sale-panel > .pos-cart-heading,
+.pos-sale-panel > .pos-total,
+.pos-sale-panel > #checkout-btn { flex: 0 0 auto; }
+#cart-lines {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+#cart-lines .table-wrap { max-height: none; overflow: visible; }
+@media (max-width: 820px) {
+  .pos-sale-panel { height: 26rem; max-height: 26rem; }
+}
 #receivables-table .table-wrap { max-height: 11.5rem; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 #receivables-table .data-table { min-width: 0; width: 100%; }
 #receivables-table .data-table th,#receivables-table .data-table td { padding-left: .4rem; padding-right: .4rem; }
