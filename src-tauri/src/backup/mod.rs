@@ -12,6 +12,7 @@
 //!   ones, and tracks state in `backup_meta` (mirrors `sync_meta`).
 
 pub mod archive_sales;
+pub mod archive_manager;
 pub mod export;
 pub mod manager;
 
