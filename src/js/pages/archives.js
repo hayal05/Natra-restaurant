@@ -7,9 +7,10 @@ export const title = "Archives";
 
 export async function render(container) {
   clearHeaderActions(document);
-  const today = new Intl.DateTimeFormat("en-CA", {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
     timeZone: "Africa/Addis_Ababa", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date());
+  }).formatToParts(new Date()).filter(p => p.type !== "literal").map(p => [p.type, p.value]));
+  const today = `${parts.year}-${parts.month}-${parts.day}`;
   container.innerHTML = `
     <div class="page-heading">
       <div><h1>Archives</h1>
