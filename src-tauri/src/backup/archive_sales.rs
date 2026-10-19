@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
 use rusqlite::{params, Connection};
+use std::collections::BTreeMap;
 use rust_xlsxwriter::{Format, Workbook};
 
 use crate::errors::{AppError, AppResult};
@@ -91,6 +92,140 @@ pub fn build_sales_archive(
         sheet.write_string(row, 17, sale.note.as_deref().unwrap_or(""))?;
     }
     sheet.autofit();
+
+    // Detail preserves reversals; revenue summaries exclude reversed sales.
+    let mut receipts: BTreeMap<i64, (String, String, String, i64, f64, bool)> = BTreeMap::new();
+    let mut waiters: BTreeMap<i64, (String, i64, f64)> = BTreeMap::new();
+    let mut items: BTreeMap<i64, (String, i64, f64)> = BTreeMap::new();
+    let (mut gross, mut reversed, mut net, mut active_qty) = (0.0, 0.0, 0.0, 0i64);
+    for sale in &rows {
+        gross += sale.line_total;
+        if sale.reversed {
+            reversed += sale.line_total;
+        } else {
+            net += sale.line_total;
+            active_qty += sale.quantity;
+            let w = waiters.entry(sale.waiter_id).or_insert((sale.waiter_name.clone().unwrap_or_default(), 0, 0.0));
+            w.1 += sale.quantity;
+            w.2 += sale.line_total;
+            let item = items.entry(sale.item_id).or_insert((sale.item_name.clone(), 0, 0.0));
+            item.1 += sale.quantity;
+            item.2 += sale.line_total;
+        }
+        let (date, time) = eat_display(&sale.timestamp)?;
+        let receipt = receipts.entry(sale.receipt).or_insert((date, time, sale.waiter_name.clone().unwrap_or_default(), 0, 0.0, sale.reversed));
+        receipt.3 += sale.quantity;
+        receipt.4 += sale.line_total;
+    }
+    {
+        let s = book.add_worksheet();
+        s.set_name("Receipt Summary")?;
+        for (i, h) in ["Receipt", "Date", "Time", "Waiter Name", "Qty", "Amount", "Reversed"].iter().enumerate() {
+            s.write_with_format(0, i as u16, *h, &heading)?;
+        }
+        for (i, (id, (date, time, name, qty, amount, is_reversed))) in receipts.iter().enumerate() {
+            let r = (i + 1) as u32;
+            s.write_number(r, 0, *id as f64)?;
+            s.write_string(r, 1, date)?;
+            s.write_string(r, 2, time)?;
+            s.write_string(r, 3, name)?;
+            s.write_number(r, 4, *qty as f64)?;
+            s.write_number_with_format(r, 5, *amount, &money)?;
+            s.write_boolean(r, 6, *is_reversed)?;
+        }
+        s.autofit();
+    }
+    {
+        let s = book.add_worksheet();
+        s.set_name("Waiter Sales Summary")?;
+        for (i, h) in ["Waiter ID", "Waiter Name", "Qty Sold", "Net Sales"].iter().enumerate() {
+            s.write_with_format(0, i as u16, *h, &heading)?;
+        }
+        for (i, (id, (name, qty, total))) in waiters.iter().enumerate() {
+            let r = (i + 1) as u32;
+            s.write_number(r, 0, *id as f64)?;
+            s.write_string(r, 1, name)?;
+            s.write_number(r, 2, *qty as f64)?;
+            s.write_number_with_format(r, 3, *total, &money)?;
+        }
+        s.autofit();
+    }
+    {
+        let s = book.add_worksheet();
+        s.set_name("Item Sales Summary")?;
+        for (i, h) in ["Item ID", "Item Name", "Qty Sold", "Net Sales"].iter().enumerate() {
+            s.write_with_format(0, i as u16, *h, &heading)?;
+        }
+        for (i, (id, (name, qty, total))) in items.iter().enumerate() {
+            let r = (i + 1) as u32;
+            s.write_number(r, 0, *id as f64)?;
+            s.write_string(r, 1, name)?;
+            s.write_number(r, 2, *qty as f64)?;
+            s.write_number_with_format(r, 3, *total, &money)?;
+        }
+        s.autofit();
+    }
+    let expenses = {
+        let mut stmt = conn.prepare(
+            "SELECT id, expense_date, category, description, amount, note
+             FROM expenses WHERE expense_date >= ?1 AND expense_date < ?2
+             ORDER BY expense_date, id"
+        )?;
+        let result = stmt.query_map(params![start_utc, end_utc], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?, r.get::<_, f64>(4)?,
+                r.get::<_, Option<String>>(5)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        result
+    };
+    let expense_total: f64 = expenses.iter().map(|e| e.4).sum();
+    {
+        let s = book.add_worksheet();
+        s.set_name("Expenses")?;
+        for (i, h) in ["Expense ID", "Date", "Time", "Category", "Description", "Amount", "Note"].iter().enumerate() {
+            s.write_with_format(0, i as u16, *h, &heading)?;
+        }
+        for (i, (id, timestamp, category, description, amount, note)) in expenses.iter().enumerate() {
+            let r = (i + 1) as u32;
+            let (date, time) = eat_display(timestamp)?;
+            s.write_number(r, 0, *id as f64)?;
+            s.write_string(r, 1, &date)?;
+            s.write_string(r, 2, &time)?;
+            s.write_string(r, 3, category)?;
+            s.write_string(r, 4, description.as_deref().unwrap_or(""))?;
+            s.write_number_with_format(r, 5, *amount, &money)?;
+            s.write_string(r, 6, note.as_deref().unwrap_or(""))?;
+        }
+        s.autofit();
+    }
+    {
+        let s = book.add_worksheet();
+        s.set_name("Batch Summary")?;
+        s.write_with_format(0, 0, "Metric", &heading)?;
+        s.write_with_format(0, 1, "Value", &heading)?;
+        for (i, (label, value)) in [
+            ("Gross sales including reversed", gross),
+            ("Reversed sales", reversed),
+            ("Net active sales", net),
+            ("Operating expenses", expense_total),
+            ("Net sales less expenses (not profit)", net - expense_total)
+        ].iter().enumerate() {
+            let r = (i + 1) as u32;
+            s.write_string(r, 0, *label)?;
+            s.write_number_with_format(r, 1, *value, &money)?;
+        }
+        s.write_string(6, 0, "Active quantity sold")?;
+        s.write_number(6, 1, active_qty as f64)?;
+        s.write_string(7, 0, "Receipts including reversed")?;
+        s.write_number(7, 1, receipts.len() as f64)?;
+        s.write_string(8, 0, "Batch ID")?;
+        s.write_string(8, 1, batch_id)?;
+        s.write_string(9, 0, "UTC window start (inclusive)")?;
+        s.write_string(9, 1, start_utc)?;
+        s.write_string(10, 0, "UTC window end (exclusive)")?;
+        s.write_string(10, 1, end_utc)?;
+        s.autofit();
+    }
     Ok(book.save_to_buffer()?)
 }
 
