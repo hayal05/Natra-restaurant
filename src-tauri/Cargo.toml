@@ -38,7 +38,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync"
 # Pure-Rust, no C compiler needed — same reasoning as the "remote"
 # libsql feature below.
 rust_xlsxwriter = "0.96"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "=2.1.6", default-features = false, features = ["deflate"] }
 calamine = "0.26"
 printpdf = "0.7"
 
