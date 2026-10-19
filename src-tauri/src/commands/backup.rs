@@ -41,3 +41,21 @@ pub fn export_transaction_archive(app: AppHandle, db: State<Db>, from: String, t
     let dir = backup::archive_manager::archive_dir(&app)?;
     backup::archive_manager::export_range(db.inner(), &dir, &from, &through)
 }
+
+#[derive(serde::Serialize)]
+pub struct ArchiveListing {
+    pub directory: String,
+    pub automatic_daily: bool,
+    pub entries: Vec<backup::archive_manager::ArchiveEntry>,
+}
+
+#[tauri::command]
+pub fn list_transaction_archives(app: AppHandle) -> AppResult<ArchiveListing> {
+    let dir = backup::archive_manager::archive_dir(&app)?;
+    let entries = backup::archive_manager::list_archives(&dir)?;
+    Ok(ArchiveListing {
+        directory: dir.to_string_lossy().into_owned(),
+        automatic_daily: true,
+        entries,
+    })
+}
