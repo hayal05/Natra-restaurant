@@ -160,6 +160,33 @@ pub fn start_daily(app: AppHandle) {
     });
 }
 
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveEntry {
+    pub filename: String,
+    pub batch_id: String,
+    pub size_bytes: u64,
+    pub valid: bool,
+}
+
+/// Directory enumeration never trusts a filename from the UI.
+pub fn list_archives(directory: &Path) -> AppResult<Vec<ArchiveEntry>> {
+    let mut entries = Vec::new();
+    for item in fs::read_dir(directory).map_err(|e| AppError::Internal(e.to_string()))? {
+        let item = item.map_err(|e| AppError::Internal(e.to_string()))?;
+        let path = item.path();
+        if !path.is_file() { continue; }
+        let Some(filename) = path.file_name().and_then(|v| v.to_str()) else { continue };
+        if !filename.starts_with("natra-sales-EAT-") || !filename.ends_with(".xlsx") { continue; }
+        let batch_id = filename.trim_start_matches("natra-sales-").trim_end_matches(".xlsx").to_string();
+        let metadata = fs::metadata(&path).map_err(|e| AppError::Internal(e.to_string()))?;
+        let valid = fs::read(&path).map(|v| verify_xlsx(&v).is_ok()).unwrap_or(false);
+        entries.push(ArchiveEntry { filename: filename.to_string(), batch_id, size_bytes: metadata.len(), valid });
+    }
+    entries.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
