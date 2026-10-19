@@ -72,5 +72,6 @@ export const backups = {
 
 export const archives = {
   list: () => invoke("list_transaction_archives"),
+  download: (filename) => invoke("download_transaction_archive", { filename }),
   export: (from, through) => invoke("export_transaction_archive", { from, through }),
 };
