@@ -324,4 +324,21 @@ mod tests {
         assert_eq!(catch_up(&db, &dir, today, 2).unwrap(), 0);
         fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn download_copy_preserves_source_and_avoids_overwrite() {
+        let db = test_db();
+        let dir = test_dir();
+        let downloads = test_dir();
+        let exported = export_range(&db, &dir, "2026-10-19", "2026-10-19").unwrap();
+        let filename = Path::new(&exported.path).file_name().unwrap().to_str().unwrap();
+        let first = copy_to_downloads(&dir, &downloads, filename).unwrap();
+        let second = copy_to_downloads(&dir, &downloads, filename).unwrap();
+        assert_ne!(first.path, second.path);
+        assert_eq!(fs::read(&first.path).unwrap(), fs::read(&exported.path).unwrap());
+        assert!(Path::new(&exported.path).exists());
+        assert!(copy_to_downloads(&dir, &downloads, "../invalid.xlsx").is_err());
+        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(downloads).unwrap();
+    }
+
 }
