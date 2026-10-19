@@ -92,7 +92,7 @@ export async function render(container) {
           const button = document.createElement("button");
           button.className = "btn btn-secondary btn-sm";
           button.type = "button";
-          button.textContent = "Download";
+          button.textContent = "Excel";
           button.disabled = !e.valid;
           button.addEventListener("click", async () => {
             button.disabled = true;
@@ -104,6 +104,21 @@ export async function render(container) {
             finally { button.disabled = !e.valid; }
           });
           actions.appendChild(button);
+          const pdf = document.createElement("button");
+          pdf.className = "btn btn-secondary btn-sm";
+          pdf.type = "button";
+          pdf.textContent = "PDF";
+          pdf.disabled = !e.valid;
+          pdf.addEventListener("click", async () => {
+            pdf.disabled = true;
+            try {
+              const path = await withErrorToast(() => api.archives.downloadPdf(e.filename));
+              feedback.textContent = "PDF copy saved: " + path;
+              pushToast("PDF saved to Downloads.", "success");
+            } catch { feedback.textContent = "Could not export this archive as PDF."; }
+            finally { pdf.disabled = !e.valid; }
+          });
+          actions.appendChild(pdf);
           return actions;
         }},
       ],
