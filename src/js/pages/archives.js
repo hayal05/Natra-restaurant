@@ -1,6 +1,7 @@
 /** Permanent offline transaction archive management. */
 import * as api from "../api.js";
 import { clearHeaderActions } from "../components/header.js";
+import { renderTable } from "../components/table.js";
 import { pushToast, withErrorToast } from "../state.js";
 
 export const title = "Archives";
@@ -27,8 +28,8 @@ export async function render(container) {
       </form>
       <p id="archive-feedback" role="status" style="margin-top:var(--space-3);font-size:var(--text-sm)"></p>
     </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">Archive library</span><button class="btn btn-secondary" id="archive-refresh" type="button" data-no-header-promotion="true">Refresh</button></div>
+    <div class="card catalog-table">
+      <div class="card-header"><span class="card-title">Archive library</span><span class="badge badge-neutral" id="archive-count">0 records</span><button class="btn btn-secondary" id="archive-refresh" type="button" data-no-header-promotion="true">Refresh</button></div>
       <div id="archive-summary" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"><input class="input" type="search" id="archive-search" placeholder="Search date or batch…" style="flex:1;min-width:180px"/><select id="archive-filter" class="select"><option value="all">All archives</option><option value="valid">Verified</option><option value="invalid">Needs attention</option></select></div>
       <div id="archive-list" aria-live="polite">Loading saved batches…</div>
@@ -48,6 +49,7 @@ export async function render(container) {
 
   const search = container.querySelector("#archive-search"), filter = container.querySelector("#archive-filter");
   const summary = container.querySelector("#archive-summary"), pageInfo = container.querySelector("#archive-page-info");
+  const countBadge = container.querySelector("#archive-count");
   const prev = container.querySelector("#archive-prev"), next = container.querySelector("#archive-next");
   const state = { rows: [], page: 0 }, pageSize = 10;
   const pretty = d => {
@@ -63,28 +65,52 @@ export async function render(container) {
     const rows=state.rows.filter(e => (filter.value==="all" || (filter.value==="valid")===e.valid) && (!query || (e.filename+" "+e.batch_id+" "+period(e.batch_id)).toLowerCase().includes(query)));
     const pages=Math.max(1,Math.ceil(rows.length/pageSize));
     state.page=Math.max(0,Math.min(state.page,pages-1));
-    list.replaceChildren();
-    if (!rows.length) {
-      const p=document.createElement("p");
-      p.textContent=state.rows.length ? "No matching archives." : "No archives yet. Export a date range to create your first workbook.";
-      list.appendChild(p);
-    } else {
-      const table=document.createElement("table");table.className="table";
-      const head=document.createElement("thead");const hr=document.createElement("tr");
-      ["Period","Batch","Size","Status",""].forEach(t=>{const th=document.createElement("th");th.textContent=t;hr.appendChild(th);});head.appendChild(hr);table.appendChild(head);
-      const body=document.createElement("tbody");
-      rows.slice(state.page*pageSize,(state.page+1)*pageSize).forEach(entry=>{
-        const tr=document.createElement("tr");
-        [period(entry.batch_id),entry.batch_id,(entry.size_bytes/1024).toFixed(1)+" KB"].forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;if(i===0)td.style.fontWeight="600";if(i===1){td.style.fontSize="var(--text-sm)";td.title=entry.filename;}tr.appendChild(td);});
-        const status=document.createElement("td"),badge=document.createElement("span");
-        badge.className="badge "+(entry.valid?"badge-sage":"badge-neutral");badge.textContent=entry.valid?"Verified":"Needs attention";status.appendChild(badge);tr.appendChild(status);
-        const action=document.createElement("td"),button=document.createElement("button");
-        button.type="button";button.className="btn btn-secondary";button.textContent="Download";button.disabled=!entry.valid;
-        button.addEventListener("click",async()=>{button.disabled=true;try{const saved=await withErrorToast(()=>api.archives.download(entry.filename));feedback.textContent="Excel copy saved: "+saved.path;pushToast("Saved to Downloads: "+saved.filename,"success");}catch{feedback.textContent="Could not save this archive to Downloads.";}finally{button.disabled=!entry.valid;}});
-        action.appendChild(button);tr.appendChild(action);body.appendChild(tr);
-      });
-      table.appendChild(body);const wrap=document.createElement("div");wrap.style.overflowX="auto";wrap.appendChild(table);list.appendChild(wrap);
-    }
+    renderTable(list, {
+      columns: [
+        { key: "batch_id", label: "Period", format: e => {
+          const wrap = document.createElement("div");
+          wrap.className = "waiter-identity";
+          const avatar = document.createElement("div");
+          avatar.className = "waiter-avatar";
+          avatar.textContent = "XL";
+          const label = document.createElement("span");
+          label.textContent = period(e.batch_id);
+          wrap.append(avatar, label);
+          return wrap;
+        }},
+        { key: "batch_id", label: "Batch", format: e => e.batch_id },
+        { key: "size_bytes", label: "Size", numeric: true, format: e => e.size_bytes >= 1048576 ? (e.size_bytes / 1048576).toFixed(2) + " MB" : (e.size_bytes / 1024).toFixed(1) + " KB" },
+        { key: "valid", label: "Status", format: e => {
+          const badge = document.createElement("span");
+          badge.className = "badge " + (e.valid ? "badge-sage" : "badge-neutral");
+          badge.textContent = e.valid ? "Verified" : "Needs attention";
+          return badge;
+        }},
+        { key: "actions", label: "Actions", format: e => {
+          const actions = document.createElement("div");
+          actions.className = "row-actions";
+          const button = document.createElement("button");
+          button.className = "btn btn-secondary btn-sm";
+          button.type = "button";
+          button.textContent = "Download";
+          button.disabled = !e.valid;
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              const saved = await withErrorToast(() => api.archives.download(e.filename));
+              feedback.textContent = "Excel copy saved: " + saved.path;
+              pushToast("Saved to Downloads: " + saved.filename, "success");
+            } catch { feedback.textContent = "Could not save this archive to Downloads."; }
+            finally { button.disabled = !e.valid; }
+          });
+          actions.appendChild(button);
+          return actions;
+        }},
+      ],
+      rows: rows.slice(state.page * pageSize, (state.page + 1) * pageSize),
+      emptyMessage: state.rows.length ? "No matching archives." : "No archives yet. Export a date range to create your first workbook.",
+      getRowKey: e => e.batch_id,
+    });
     pageInfo.textContent=rows.length ? "Showing "+(state.page*pageSize+1)+"–"+Math.min((state.page+1)*pageSize,rows.length)+" of "+rows.length : "0 files";
     prev.disabled=state.page===0;next.disabled=state.page>=pages-1;
   }
@@ -97,6 +123,7 @@ export async function render(container) {
     try {
       const data=await withErrorToast(()=>api.archives.list());directory.textContent=data.directory;state.rows=data.entries;state.page=0;
       const valid=data.entries.filter(e=>e.valid).length;summary.replaceChildren();
+      countBadge.textContent = data.entries.length + " record" + (data.entries.length === 1 ? "" : "s");
       [[data.entries.length,"Total batches"],[valid,"Verified"],[data.entries.length-valid,"Needs attention"]].forEach(([value,label])=>{
         const tile=document.createElement("div");tile.style.cssText="padding:12px 16px;border:1px solid var(--color-border,#ddd);border-radius:10px;flex:1;min-width:120px";
         const number=document.createElement("strong");number.style.cssText="display:block;font-size:1.4rem";number.textContent=String(value);
