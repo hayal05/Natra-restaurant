@@ -187,6 +187,51 @@ pub fn list_archives(directory: &Path) -> AppResult<Vec<ArchiveEntry>> {
     Ok(entries)
 }
 
+
+#[derive(Debug, Serialize)]
+pub struct DownloadedArchive {
+    pub path: String,
+    pub filename: String,
+}
+
+/// Copy a validated permanent batch into Downloads. Never move the source or
+/// overwrite an existing Downloads file; suffix subsequent copies.
+pub fn copy_to_downloads(archives: &Path, downloads: &Path, filename: &str) -> AppResult<DownloadedArchive> {
+    if !filename.starts_with("natra-sales-EAT-") || !filename.ends_with(".xlsx")
+        || !filename.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        || filename.contains("..") {
+        return Err(AppError::Validation("invalid archive filename".into()));
+    }
+    let source = archives.join(filename);
+    let bytes = fs::read(&source).map_err(|e| AppError::Internal(format!("cannot read archive: {e}")))?;
+    verify_xlsx(&bytes)?;
+    fs::create_dir_all(downloads).map_err(|e| AppError::Internal(format!("cannot access Downloads: {e}")))?;
+    let stem = filename.trim_end_matches(".xlsx");
+    for index in 0..1000 {
+        let candidate = if index == 0 { filename.to_string() } else { format!("{stem}-{index}.xlsx") };
+        let target = downloads.join(&candidate);
+        let mut file = match OpenOptions::new().create_new(true).write(true).open(&target) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(AppError::Internal(format!("cannot create Downloads copy: {e}"))),
+        };
+        let saved = file.write_all(&bytes).and_then(|_| file.sync_all());
+        drop(file);
+        if let Err(e) = saved {
+            let _ = fs::remove_file(&target);
+            return Err(AppError::Internal(format!("cannot save Downloads copy: {e}")));
+        }
+        if let Err(e) = fs::read(&target)
+            .map_err(|err| AppError::Internal(err.to_string()))
+            .and_then(|data| verify_xlsx(&data)) {
+            let _ = fs::remove_file(&target);
+            return Err(e);
+        }
+        return Ok(DownloadedArchive { path: target.to_string_lossy().into_owned(), filename: candidate });
+    }
+    Err(AppError::Internal("too many Downloads copies of this archive".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
