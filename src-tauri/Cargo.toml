@@ -39,6 +39,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync"
 # libsql feature below.
 rust_xlsxwriter = "0.96"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+calamine = "0.26"
+printpdf = "0.7"
 
 # Turso/libSQL client for optional cloud sync (see src/sync/turso).
 # "remote" is pure-Rust HTTP (Hrana) — no bundled SQLite/C compiler
