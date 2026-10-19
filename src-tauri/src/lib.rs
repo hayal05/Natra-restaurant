@@ -90,6 +90,7 @@ pub fn run() {
             commands::backup::backup_now,
             commands::backup::set_backup_enabled,
             commands::backup::export_transaction_archive,
+            commands::backup::list_transaction_archives,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NATRA");
