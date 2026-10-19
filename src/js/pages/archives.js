@@ -14,7 +14,7 @@ export async function render(container) {
   container.innerHTML = `
     <div class="page-heading">
       <div><h1>Archives</h1>
-      <p class="page-subtitle">Permanent, offline Excel transaction batches. Independent of 30-file backups.</p></div>
+      <p class="page-subtitle">Export Excel to Downloads. Permanent offline copies remain safely stored in AppData.</p></div>
     </div>
     <div class="card">
       <div class="card-header"><span class="card-title">Export transaction archive</span></div>
@@ -23,7 +23,7 @@ export async function render(container) {
           <input class="input" type="date" id="archive-from" required /></div>
         <div class="field"><label class="field-label" for="archive-through">Through</label>
           <input class="input" type="date" id="archive-through" required /></div>
-        <button class="btn btn-primary" id="archive-export" type="submit">Export Excel</button>
+        <button class="btn btn-primary" id="archive-export" type="submit">Export to Downloads</button>
       </form>
       <p id="archive-feedback" role="status" style="margin-top:var(--space-3);font-size:var(--text-sm)"></p>
     </div>
@@ -57,7 +57,7 @@ export async function render(container) {
         const table = document.createElement("table");
         table.className = "table";
         const head = document.createElement("thead");
-        head.innerHTML = "<tr><th>Batch ID</th><th>File</th><th>Size</th><th>Integrity</th></tr>";
+        head.innerHTML = "<tr><th>Batch ID</th><th>File</th><th>Size</th><th>Integrity</th><th>Action</th></tr>";
         table.appendChild(head);
         const body = document.createElement("tbody");
         for (const entry of data.entries) {
@@ -68,6 +68,23 @@ export async function render(container) {
             td.textContent = value;
             tr.appendChild(td);
           }
+          const action = document.createElement("td");
+          const button = document.createElement("button");
+          button.className = "btn btn-secondary";
+          button.type = "button";
+          button.textContent = "Save to Downloads";
+          button.disabled = !entry.valid;
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              const saved = await withErrorToast(() => api.archives.download(entry.filename));
+              pushToast("Saved to Downloads: " + saved.filename, "success");
+              feedback.textContent = "Excel copy saved: " + saved.path;
+            } catch { feedback.textContent = "Could not save the archive to Downloads."; }
+            finally { button.disabled = !entry.valid; }
+          });
+          action.appendChild(button);
+          tr.appendChild(action);
           body.appendChild(tr);
         }
         table.appendChild(body);
@@ -91,10 +108,10 @@ export async function render(container) {
     feedback.textContent = "Generating and validating workbook…";
     try {
       const result = await withErrorToast(() => api.archives.export(from.value, through.value));
-      feedback.textContent = result.already_exists
-        ? "An existing verified batch was found: " + result.path
-        : "Excel batch saved: " + result.path;
-      pushToast(result.already_exists ? "Existing archive verified." : "Archive exported successfully.", "success");
+      const filename = result.path.replace(/.*[\\\\/]/, "");
+      const saved = await withErrorToast(() => api.archives.download(filename));
+      feedback.textContent = "Excel saved to Downloads: " + saved.path;
+      pushToast("Excel saved to Downloads.", "success");
       await load();
     } catch (error) {
       feedback.textContent = "Export failed. No existing batch was overwritten.";
