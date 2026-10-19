@@ -38,6 +38,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync"
 # Pure-Rust, no C compiler needed — same reasoning as the "remote"
 # libsql feature below.
 rust_xlsxwriter = "0.96"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Turso/libSQL client for optional cloud sync (see src/sync/turso).
 # "remote" is pure-Rust HTTP (Hrana) — no bundled SQLite/C compiler
