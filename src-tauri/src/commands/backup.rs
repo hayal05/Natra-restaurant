@@ -71,3 +71,12 @@ pub fn download_transaction_archive(
         .map_err(|e| crate::errors::AppError::Internal(format!("Downloads directory unavailable: {e}")))?;
     backup::archive_manager::copy_to_downloads(&archives, &downloads, &filename)
 }
+
+#[tauri::command]
+pub fn download_transaction_archive_pdf(app: AppHandle, filename: String) -> AppResult<String> {
+    use tauri::Manager;
+    let archives = backup::archive_manager::archive_dir(&app)?;
+    let downloads = app.path().download_dir()
+        .map_err(|e| crate::errors::AppError::Internal(format!("Downloads unavailable: {e}")))?;
+    backup::archive_pdf::save_pdf_to_downloads(&archives, &downloads, &filename)
+}
