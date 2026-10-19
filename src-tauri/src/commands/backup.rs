@@ -34,3 +34,49 @@ pub fn set_backup_enabled(db: State<Db>, enabled: bool) -> AppResult<Settings> {
     let conn = db.lock();
     settings_service::set_backup_enabled(&conn, enabled)
 }
+
+/// Offline manual range export; business dates interpreted in EAT.
+#[tauri::command]
+pub fn export_transaction_archive(app: AppHandle, db: State<Db>, from: String, through: String) -> AppResult<backup::archive_manager::ArchiveResult> {
+    let dir = backup::archive_manager::archive_dir(&app)?;
+    backup::archive_manager::export_range(db.inner(), &dir, &from, &through)
+}
+
+#[derive(serde::Serialize)]
+pub struct ArchiveListing {
+    pub directory: String,
+    pub automatic_daily: bool,
+    pub entries: Vec<backup::archive_manager::ArchiveEntry>,
+}
+
+#[tauri::command]
+pub fn list_transaction_archives(app: AppHandle) -> AppResult<ArchiveListing> {
+    let dir = backup::archive_manager::archive_dir(&app)?;
+    let entries = backup::archive_manager::list_archives(&dir)?;
+    Ok(ArchiveListing {
+        directory: dir.to_string_lossy().into_owned(),
+        automatic_daily: true,
+        entries,
+    })
+}
+
+#[tauri::command]
+pub fn download_transaction_archive(
+    app: AppHandle,
+    filename: String,
+) -> AppResult<backup::archive_manager::DownloadedArchive> {
+    use tauri::Manager;
+    let archives = backup::archive_manager::archive_dir(&app)?;
+    let downloads = app.path().download_dir()
+        .map_err(|e| crate::errors::AppError::Internal(format!("Downloads directory unavailable: {e}")))?;
+    backup::archive_manager::copy_to_downloads(&archives, &downloads, &filename)
+}
+
+#[tauri::command]
+pub fn download_transaction_archive_pdf(app: AppHandle, filename: String) -> AppResult<String> {
+    use tauri::Manager;
+    let archives = backup::archive_manager::archive_dir(&app)?;
+    let downloads = app.path().download_dir()
+        .map_err(|e| crate::errors::AppError::Internal(format!("Downloads unavailable: {e}")))?;
+    backup::archive_pdf::save_pdf_to_downloads(&archives, &downloads, &filename)
+}

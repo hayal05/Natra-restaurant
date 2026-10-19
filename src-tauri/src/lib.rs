@@ -43,6 +43,7 @@ pub fn run() {
             // Same pattern: a no-op every tick until Settings >
             // backup_enabled is turned on (it's on by default).
             backup::start_background(app.handle().clone());
+            backup::archive_manager::start_daily(app.handle().clone());
 
             Ok(())
         })
@@ -88,6 +89,10 @@ pub fn run() {
             commands::backup::backup_status,
             commands::backup::backup_now,
             commands::backup::set_backup_enabled,
+            commands::backup::export_transaction_archive,
+            commands::backup::list_transaction_archives,
+            commands::backup::download_transaction_archive,
+            commands::backup::download_transaction_archive_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NATRA");

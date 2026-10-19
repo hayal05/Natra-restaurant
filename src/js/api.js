@@ -69,3 +69,10 @@ export const backups = {
   now: () => invoke("backup_now"),
   setEnabled: (enabled) => invoke("set_backup_enabled", { enabled }),
 };
+
+export const archives = {
+  list: () => invoke("list_transaction_archives"),
+  download: (filename) => invoke("download_transaction_archive", { filename }),
+  downloadPdf: (filename) => invoke("download_transaction_archive_pdf", { filename }),
+  export: (from, through) => invoke("export_transaction_archive", { from, through }),
+};
