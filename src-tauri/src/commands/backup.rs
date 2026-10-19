@@ -34,3 +34,10 @@ pub fn set_backup_enabled(db: State<Db>, enabled: bool) -> AppResult<Settings> {
     let conn = db.lock();
     settings_service::set_backup_enabled(&conn, enabled)
 }
+
+/// Offline manual range export; business dates interpreted in EAT.
+#[tauri::command]
+pub fn export_transaction_archive(app: AppHandle, db: State<Db>, from: String, through: String) -> AppResult<backup::archive_manager::ArchiveResult> {
+    let dir = backup::archive_manager::archive_dir(&app)?;
+    backup::archive_manager::export_range(db.inner(), &dir, &from, &through)
+}
