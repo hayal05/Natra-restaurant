@@ -55,6 +55,7 @@ async function bootstrap(){
     "/raw-materials":{loader:()=>import("./pages/raw-materials.js"),title:"Raw materials"},
     "/expenses":{loader:()=>import("./pages/expenses.js"),title:"Expenses"},
     "/reports":{loader:()=>import("./pages/reports.js"),title:"Reports"},
+    "/archives":{loader:()=>import("./pages/archives.js"),title:"Archives"},
     "/settings":{loader:()=>import("./pages/settings.js"),title:"Settings"}
   });
 
