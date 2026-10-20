@@ -5,6 +5,7 @@ pub mod expenses;
 pub mod items;
 pub mod pos;
 pub mod raw_materials;
+pub mod month_closing;
 pub mod reports;
 pub mod settings;
 pub mod waiters;
