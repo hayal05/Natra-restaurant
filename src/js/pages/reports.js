@@ -27,7 +27,7 @@ export async function render(container) {
     <div class="page-heading">
       <div>
         <h1>Reports</h1>
-        <p class="page-subtitle">Daily revenue and product sales, plus monthly costs and cash flow.</p>
+        <p class="page-subtitle">Daily provisional results and product sales, plus monthly finalized profit and cash flow.</p>
       </div>
     </div>
     <div class="card" id="daily-report-card">
@@ -156,7 +156,7 @@ async function loadDailyReport(els, state) {
   statRow.appendChild(createStatCard({ label: "Total cost", value: formatMoney(totalCost, currency) }));
   statRow.appendChild(
     createStatCard({
-      label: "Net profit",
+      label: "Provisional profit",
       value: formatMoney(summary.profit, currency),
       tone: summary.profit >= 0 ? "sage" : "rust",
     })
@@ -217,7 +217,7 @@ function printDailyReport(els, state) {
   statRow.appendChild(createStatCard({ label: "Total cost", value: formatMoney(totalCost, currency) }));
   statRow.appendChild(
     createStatCard({
-      label: "Net profit",
+      label: "Provisional profit",
       value: formatMoney(summary.profit, currency),
       tone: summary.profit >= 0 ? "sage" : "rust",
     })
