@@ -9,12 +9,18 @@ import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney, formatNumber } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
+import { waiterReceiptHtml, printWaiterReceipt } from "../utils/waiter-receipt.js";
 import { todayIso, daysAgoIso, dateRange, formatDateTime } from "../utils/dates.js";
 
 // Sales can only be reversed within this many hours of being made — must
 // match sales_service::REVERSAL_WINDOW_HOURS on the backend, which is the
 // real enforcement point; this is only used to gray out the button early.
 const REVERSAL_WINDOW_HOURS = 24;
+const PRINT_PROMPT_KEY = "natra.pos.askToPrintReceipt";
+function readPrintPreference() {
+  try { return localStorage.getItem(PRINT_PROMPT_KEY) !== "off"; }
+  catch { return true; }
+}
 
 // sale.created_at is stored by SQLite as a UTC "YYYY-MM-DD HH:MM:SS" string
 // with no timezone marker, so it must be parsed as UTC explicitly here.
@@ -50,6 +56,7 @@ export async function render(container) {
         <div class="pos-cart-heading">Selected items</div>
         <div id="cart-lines"></div>
         <div class="pos-total"><span class="field-label">Total</span><span class="ticket-card-value" id="cart-total">${formatMoney(0)}</span></div>
+        <label for="pos-print-switch" style="display:flex;align-items:center;gap:10px;margin-top:var(--space-3);font-size:var(--text-sm);cursor:pointer"><input id="pos-print-switch" type="checkbox" role="switch" style="width:18px;height:18px;accent-color:var(--color-navy,#234)" /><span>Ask to print receipt after sale</span></label>
         <button class="btn btn-primary" id="checkout-btn" style="width:100%;margin-top:var(--space-4)" disabled>Complete sale</button>
       </div>
     </div>
@@ -77,6 +84,12 @@ export async function render(container) {
   const cartCountEl = container.querySelector("#cart-count");
   const cartTotalEl = container.querySelector("#cart-total");
   const checkoutBtn = container.querySelector("#checkout-btn");
+  const printSwitch = container.querySelector("#pos-print-switch");
+  printSwitch.checked = readPrintPreference();
+  printSwitch.addEventListener("change", () => {
+    try { localStorage.setItem(PRINT_PROMPT_KEY, printSwitch.checked ? "on" : "off"); }
+    catch { pushToast("Print preference could not be saved on this device.", "error"); }
+  });
   const dailyHistoryTable = container.querySelector("#daily-sales-table");
   const dailyHistoryTotalEl = container.querySelector("#daily-history-total");
   const historyFromInput = container.querySelector("#history-from");
@@ -391,6 +404,40 @@ export async function render(container) {
       cart = new Map();
       renderItemTable();
       renderCart();
+      // Printing is a local POS preference. The sale is already committed.
+      // Never make a print/preview error look like checkout failed.
+      if (printSwitch.checked) {
+        try {
+          const waiterName = allWaiters.find((w) => w.id === waiterId)?.full_name || `Waiter #${waiterId}`;
+          const { settings, user } = store.getState();
+          const receipt = waiterReceiptHtml({
+            result,
+            waiterName,
+            cashierName: user?.full_name || user?.username || "—",
+            restaurantName: settings?.restaurant_name || "Restaurant",
+            currency: settings?.currency || currency,
+          });
+          const note = document.createElement("div");
+          note.textContent = `Sale #${result.sale.id} saved. Print the receipt for ${waiterName}?`;
+          const skip = document.createElement("button");
+          skip.className = "btn btn-secondary";
+          skip.type = "button";
+          skip.textContent = "Close";
+          skip.addEventListener("click", closeModal);
+          const print = document.createElement("button");
+          print.className = "btn btn-primary";
+          print.type = "button";
+          print.textContent = "Print receipt";
+          print.addEventListener("click", () => {
+            try { printWaiterReceipt(receipt); }
+            catch { pushToast("Print couldn't start. Sale is already saved.", "error"); }
+            closeModal();
+          });
+          openModal({ title: "Sale completed", content: note, actions: [skip, print] });
+        } catch {
+          pushToast("Sale saved, but print preview could not open.", "error");
+        }
+      }
       await renderDailyHistory();
     } catch (err) {
       pushToast(typeof err === "string" ? err : (err?.message || "Couldn't complete the sale."), "error");
