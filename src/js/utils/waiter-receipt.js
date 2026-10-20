@@ -17,14 +17,14 @@ export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantN
   const timeLabel = new Intl.DateTimeFormat("en-US", {
     timeZone: "Africa/Addis_Ababa", hour: "2-digit", minute: "2-digit", hour12: true,
   }).format(date);
-  const rows = items.map((item) => \`<tr>
-    <td>\${escapeHtml(item.item_name)}</td><td class="num">\${item.quantity}</td>
-    <td class="num">\${amount(item.unit_price)}</td><td class="num">\${amount(item.line_total)}</td>
-  </tr>\`).join("");
+  const rows = items.map((item) => `<tr>
+    <td>${escapeHtml(item.item_name)}</td><td class="num">${item.quantity}</td>
+    <td class="num">${amount(item.unit_price)}</td><td class="num">${amount(item.line_total)}</td>
+  </tr>`).join("");
   const unit = escapeHtml(currency || "ETB");
   const title = escapeHtml(restaurantName || "Restaurant");
   const total = amount(sale.total_amount);
-  return \`<!doctype html><html><head><meta charset="utf-8"/><title>Waiter Receipt #\${sale.id}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>Waiter Receipt #${sale.id}</title>
   <style>
     @page { size: 80mm auto; margin: 4mm; }
     * { box-sizing:border-box; }
@@ -50,26 +50,26 @@ export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantN
     @media screen { body { padding:16px; } .paper { border:1px solid #ddd; } }
   </style></head><body><main class="paper">
     <div class="app">Natra Restaurant POS</div>
-    <div class="restaurant">\${title}</div>
+    <div class="restaurant">${title}</div>
     <div class="title">Waiter Outstanding Receipt</div>
     <div class="rule"></div>
-    <div class="meta"><span>Transaction Ref</span><span>S-\${sale.id}</span></div>
-    <div class="meta"><span>Date</span><span>\${dateLabel}</span></div>
-    <div class="meta"><span>Time</span><span>\${timeLabel}</span></div>
-    <div class="meta"><span>Waiter</span><span>\${escapeHtml(waiterName)}</span></div>
-    <div class="meta"><span>Waiter ID</span><span>\${sale.waiter_id}</span></div>
-    <div class="meta"><span>Cashier</span><span>\${escapeHtml(cashierName || "—")}</span></div>
+    <div class="meta"><span>Transaction Ref</span><span>S-${sale.id}</span></div>
+    <div class="meta"><span>Date</span><span>${dateLabel}</span></div>
+    <div class="meta"><span>Time</span><span>${timeLabel}</span></div>
+    <div class="meta"><span>Waiter</span><span>${escapeHtml(waiterName)}</span></div>
+    <div class="meta"><span>Waiter ID</span><span>${sale.waiter_id}</span></div>
+    <div class="meta"><span>Cashier</span><span>${escapeHtml(cashierName || "—")}</span></div>
     <div class="rule"></div>
     <strong>TRANSACTION ITEMS</strong>
-    <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Subtotal</th></tr></thead><tbody>\${rows}</tbody></table>
-    <div class="total"><span>Grand total</span><strong>\${unit} \${total}</strong></div>
-    <div class="total"><span>Amount settled</span><span>\${unit} 0.00</span></div>
-    <div class="total due"><span>Outstanding</span><span>\${unit} \${total}</span></div>
+    <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Subtotal</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="total"><span>Grand total</span><strong>${unit} ${total}</strong></div>
+    <div class="total"><span>Amount settled</span><span>${unit} 0.00</span></div>
+    <div class="total due"><span>Outstanding</span><span>${unit} ${total}</span></div>
     <div class="rule"></div>
     <div class="small">Outstanding amount for this transaction only. This receipt is not a payment confirmation.</div>
     <div class="signatures"><div>Waiter Signature</div><div>Authorized By</div></div>
     <footer>Thank you</footer>
-  </main></body></html>\`;
+  </main></body></html>`;
 }
 
 export function printWaiterReceipt(html) {
