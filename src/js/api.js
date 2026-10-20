@@ -57,6 +57,7 @@ export const pos = {
 
 export const reports = {
   monthly: (year, month) => invoke("monthly_report", { year, month }),
+  monthlyEstimated: (year, month) => invoke("monthly_estimated_profit", { year, month }),
   productPerformance: (from, to) => invoke("product_performance", { from: from ?? null, to: to ?? null }),
   salesMix: (from, to) => invoke("sales_mix", { from: from ?? null, to: to ?? null }),
   cashFlowByYear: (year) => invoke("cash_flow_by_year", { year }),
