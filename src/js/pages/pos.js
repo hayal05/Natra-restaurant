@@ -9,6 +9,7 @@ import { renderTable } from "../components/table.js";
 import { openModal, closeModal } from "../components/modal.js";
 import { formatMoney, formatNumber } from "../utils/currency.js";
 import { humanizeEnum } from "../utils/formatting.js";
+import { waiterReceiptHtml, printWaiterReceipt } from "../utils/waiter-receipt.js";
 import { todayIso, daysAgoIso, dateRange, formatDateTime } from "../utils/dates.js";
 
 // Sales can only be reversed within this many hours of being made — must
@@ -388,9 +389,41 @@ export async function render(container) {
         return sum + itemPrice(item || {}) * line.quantity;
       }, 0));
       pushToast(`Sale completed - ${formatMoney(completedTotal, currency)}.`, "success");
+      // Use committed sale items/prices from checkout, never mutable cart values.
+      const waiterName = allWaiters.find((w) => w.id === waiterId)?.full_name || `Waiter #${waiterId}`;
+      const { settings, user } = store.getState();
+      const receipt = waiterReceiptHtml({
+        result,
+        waiterName,
+        cashierName: user?.full_name || user?.username || "—",
+        restaurantName: settings?.restaurant_name || "Restaurant",
+        currency: settings?.currency || currency,
+      });
       cart = new Map();
       renderItemTable();
       renderCart();
+      // Print is optional and must not cause a successful checkout to retry.
+      try {
+        const note = document.createElement("div");
+        note.textContent = `Sale #${result.sale.id} saved. Print the receipt for ${waiterName}?`;
+        const skip = document.createElement("button");
+        skip.className = "btn btn-secondary";
+        skip.type = "button";
+        skip.textContent = "Close";
+        skip.addEventListener("click", closeModal);
+        const print = document.createElement("button");
+        print.className = "btn btn-primary";
+        print.type = "button";
+        print.textContent = "Print receipt";
+        print.addEventListener("click", () => {
+          try { printWaiterReceipt(receipt); }
+          catch { pushToast("Print couldn't start. Sale is already saved.", "error"); }
+          closeModal();
+        });
+        openModal({ title: "Sale completed", content: note, actions: [skip, print] });
+      } catch {
+        pushToast("Sale saved, but print preview could not open.", "error");
+      }
       await renderDailyHistory();
     } catch (err) {
       pushToast(typeof err === "string" ? err : (err?.message || "Couldn't complete the sale."), "error");
