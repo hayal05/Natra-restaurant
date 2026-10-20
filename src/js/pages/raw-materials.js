@@ -51,7 +51,12 @@ export async function render(container) {
   addBtn.className = "btn btn-primary";
   addBtn.textContent = "Add material";
   addBtn.addEventListener("click", () => openMaterialModal(els));
-  setHeaderActions(document, [addBtn]);
+  const closingBtn = document.createElement("button");
+  closingBtn.className = "btn btn-secondary";
+  closingBtn.type = "button";
+  closingBtn.textContent = "Month-End Closing";
+  closingBtn.addEventListener("click", () => navigate("/raw-materials/closing"));
+  setHeaderActions(document, [closingBtn, addBtn]);
 
   await loadAll(els);
 }
