@@ -2,6 +2,8 @@
 //! Purchases are filtered on Ethiopia-local calendar boundaries, stored as UTC SQLite strings.
 use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
+use crate::database::transactions::with_transaction;
 use serde::Serialize;
 use crate::errors::{AppError, AppResult};
 
@@ -108,6 +110,176 @@ pub fn value_remaining(b: &MaterialBalance, remaining: f64) -> AppResult<ValuedC
         purchased_quantity: b.purchased_quantity, purchased_value: b.purchased_value,
         remaining_quantity: qty, closing_value: value,
         consumed_value: (b.available_value - value).max(0.0),
+    })
+}
+
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClosingState {
+    pub month: String,
+    pub status: String,
+    pub lines: Vec<ValuedClosing>,
+}
+
+fn latest_closing(conn: &Connection) -> AppResult<Option<(String, String)>> {
+    Ok(conn.query_row(
+        "SELECT period_month,status FROM raw_material_month_closings ORDER BY period_month DESC LIMIT 1",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional()?)
+}
+
+fn existing_closing(conn: &Connection, month: &str) -> AppResult<Option<(i64, String)>> {
+    Ok(conn.query_row(
+        "SELECT id,status FROM raw_material_month_closings WHERE period_month=?1",
+        [month], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional()?)
+}
+
+fn check_sequence(conn: &Connection, month: &str) -> AppResult<()> {
+    let (start, _) = period(month)?;
+    let earliest: Option<String> = conn.query_row(
+        "SELECT MIN(period_month) FROM raw_material_month_closings", [], |r| r.get(0)
+    )?;
+    if let Some(first) = earliest {
+        if month < first.as_str() {
+            return Err(AppError::Validation("cannot insert a month before the existing closing history".into()));
+        }
+    }
+    // No gaps are allowed once the ledger begins.
+    if let Some((latest, _)) = latest_closing(conn)? {
+        if month > latest.as_str() {
+            let (last, next) = period(&latest)?;
+            let _ = last;
+            let expected = next.format("%Y-%m-%d").to_string();
+            if month != expected {
+                return Err(AppError::Validation("close months consecutively without gaps".into()));
+            }
+        }
+    }
+    // An immediately preceding month, if recorded, must be closed.
+    let previous = start.pred_opt().ok_or_else(|| AppError::Validation("invalid month".into()))?;
+    let key = previous.with_day(1).unwrap().format("%Y-%m-%d").to_string();
+    if let Some((_, status)) = existing_closing(conn, &key)? {
+        if status != "closed" {
+            return Err(AppError::Validation("close the preceding month first".into()));
+        }
+    }
+    Ok(())
+}
+
+/// Save a full snapshot of manually entered remaining quantities. Changes are
+/// atomic: an invalid line cannot partially overwrite an existing draft.
+/// No purchase records are added or altered.
+pub fn save_draft(
+    conn: &mut Connection,
+    month: &str,
+    remaining: &[(i64, f64)],
+) -> AppResult<ClosingState> {
+    period(month)?;
+    with_transaction(conn, |tx| {
+        check_sequence(tx, month)?;
+        let existing = existing_closing(tx, month)?;
+        if matches!(existing, Some((_, ref status)) if status == "closed") {
+            return Err(AppError::Validation("closed month must be explicitly reopened before editing".into()));
+        }
+        if let Some((latest, _)) = latest_closing(tx)? {
+            if latest.as_str() > month {
+                return Err(AppError::Validation("cannot edit an earlier period while a later closing exists".into()));
+            }
+        }
+        let balances = preview(tx, month)?;
+        let entries: HashMap<i64, f64> = remaining.iter().copied().collect();
+        if entries.len() != remaining.len() {
+            return Err(AppError::Validation("duplicate raw material in closing".into()));
+        }
+        let known: HashSet<i64> = balances.iter().map(|b| b.raw_material_id).collect();
+        if entries.keys().any(|id| !known.contains(id)) {
+            return Err(AppError::Validation("unknown raw material in closing".into()));
+        }
+        let valued: Vec<ValuedClosing> = balances.iter().filter_map(|b| entries.get(&b.raw_material_id)
+            .map(|quantity| value_remaining(b, *quantity))).collect::<AppResult<_>>()?;
+        let closing_id = if let Some((id, _)) = existing { id } else {
+            tx.execute("INSERT INTO raw_material_month_closings(period_month) VALUES(?1)", [month])?;
+            tx.last_insert_rowid()
+        };
+        tx.execute("DELETE FROM raw_material_month_closing_lines WHERE closing_id=?1", [closing_id])?;
+        for b in &balances {
+            let v = valued.iter().find(|v| v.raw_material_id == b.raw_material_id);
+            tx.execute(
+                "INSERT INTO raw_material_month_closing_lines (closing_id,raw_material_id,opening_quantity,opening_value,purchased_quantity,purchased_value,remaining_quantity,closing_value) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![closing_id,b.raw_material_id,b.opening_quantity,b.opening_value,b.purchased_quantity,b.purchased_value,v.map(|x|x.remaining_quantity),v.map(|x|x.closing_value)]
+            )?;
+        }
+        tx.execute("UPDATE raw_material_month_closings SET updated_at=datetime('now') WHERE id=?1", [closing_id])?;
+        Ok(ClosingState { month: month.into(), status: "draft".into(), lines: valued })
+    })
+}
+
+/// Finalizing requires a completed material inventory and a finished month.
+/// The stored closing values become the next month's opening balances through
+/// preview(). They are never inserted as purchases.
+pub fn close_month(conn: &mut Connection, month: &str) -> AppResult<ClosingState> {
+    let (_, next) = period(month)?;
+    let today_eat = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(10800).unwrap()).date_naive();
+    if next > today_eat {
+        return Err(AppError::Validation("cannot finalize a month that has not ended".into()));
+    }
+    with_transaction(conn, |tx| {
+        check_sequence(tx, month)?;
+        let (id, status) = existing_closing(tx, month)?
+            .ok_or_else(|| AppError::Validation("save a draft before closing".into()))?;
+        if status != "draft" {
+            return Err(AppError::Validation("month is already closed".into()));
+        }
+        if let Some((latest, _)) = latest_closing(tx)? {
+            if latest != month {
+                return Err(AppError::Validation("close the latest month first".into()));
+            }
+        }
+        // Refresh the draft against actual purchases at the time of closing,
+        // preventing a stale draft from silently misvaluing late entries.
+        let balances = preview(tx, month)?;
+        let mut stmt = tx.prepare("SELECT raw_material_id,remaining_quantity FROM raw_material_month_closing_lines WHERE closing_id=?1")?;
+        let entries: Vec<(i64, Option<f64>)> = stmt.query_map([id], |r| Ok((r.get(0)?,r.get(1)?)))?
+            .collect::<Result<_,_>>()?;
+        drop(stmt);
+        if entries.len() != balances.len() || entries.iter().any(|(_, qty)| qty.is_none()) {
+            return Err(AppError::Validation("all material remaining quantities must be entered".into()));
+        }
+        let values: HashMap<i64,f64> = entries.into_iter().map(|(id,q)| (id,q.unwrap())).collect();
+        let mut computed = Vec::new();
+        for b in balances {
+            let qty = *values.get(&b.raw_material_id).ok_or_else(|| AppError::Validation("missing material".into()))?;
+            let valued = value_remaining(&b, qty)?;
+            tx.execute("UPDATE raw_material_month_closing_lines SET opening_quantity=?1,opening_value=?2,purchased_quantity=?3,purchased_value=?4,closing_value=?5 WHERE closing_id=?6 AND raw_material_id=?7",
+                params![valued.opening_quantity,valued.opening_value,valued.purchased_quantity,valued.purchased_value,valued.closing_value,id,b.raw_material_id])?;
+            computed.push(valued);
+        }
+        tx.execute("UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now'),updated_at=datetime('now') WHERE id=?1", [id])?;
+        Ok(ClosingState { month: month.into(), status: "closed".into(), lines: computed })
+    })
+}
+
+/// Controlled correction: reopen only the latest closed period and require a
+/// written reason. Historical records remain intact; subsequent months cannot
+/// silently inherit changed values while locked.
+pub fn reopen_month(conn: &mut Connection, month: &str, reason: &str) -> AppResult<()> {
+    if reason.trim().len() < 5 {
+        return Err(AppError::Validation("a correction reason of at least five characters is required".into()));
+    }
+    with_transaction(conn, |tx| {
+        let (id, status) = existing_closing(tx, month)?
+            .ok_or_else(|| AppError::Validation("closing does not exist".into()))?;
+        if status != "closed" {
+            return Err(AppError::Validation("month is not closed".into()));
+        }
+        if latest_closing(tx)?.map(|(m,_)| m) != Some(month.to_string()) {
+            return Err(AppError::Validation("reopen later months first to preserve carry-forward".into()));
+        }
+        tx.execute("INSERT INTO raw_material_closing_audit(closing_id,action,reason) VALUES(?1,'reopen',?2)",
+            params![id,reason.trim()])?;
+        tx.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL,updated_at=datetime('now') WHERE id=?1",[id])?;
+        Ok(())
     })
 }
 
