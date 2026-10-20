@@ -14,6 +14,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("008_waiter_profile_photo.sql", include_str!("../../../migrations/008_waiter_profile_photo.sql")),
     ("009_sale_reversal.sql", include_str!("../../../migrations/009_sale_reversal.sql")),
     ("010_raw_material_month_closing.sql", include_str!("../../../migrations/010_raw_material_month_closing.sql")),
+    ("011_raw_material_closing_audit.sql", include_str!("../../../migrations/011_raw_material_closing_audit.sql")),
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
