@@ -36,6 +36,13 @@ export const rawMaterials = {
   totalCost: (from, to) => invoke("raw_material_total_cost", { from: from ?? null, to: to ?? null }),
 };
 
+export const monthClosing = {
+  get: (month) => invoke("get_material_month_closing", { month }),
+  saveDraft: (month, remaining) => invoke("save_material_month_draft", { month, remaining }),
+  close: (month) => invoke("close_material_month", { month }),
+  reopen: (month, reason) => invoke("reopen_material_month", { month, reason }),
+};
+
 export const expenses = {
   create: (category, description, amount, expenseDate, note) => invoke("create_expense", { category, description: description ?? null, amount, expenseDate: expenseDate ?? null, note: note ?? null }),
   list: (from, to) => invoke("list_expenses", { from: from ?? null, to: to ?? null }),
