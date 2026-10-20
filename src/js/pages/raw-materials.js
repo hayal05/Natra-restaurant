@@ -6,6 +6,7 @@
  */
 
 import * as api from "../api.js";
+import { navigate } from "../router.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { setHeaderActions } from "../components/header.js";
 import { createStatCard } from "../components/stat-card.js";
