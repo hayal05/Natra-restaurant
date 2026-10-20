@@ -16,6 +16,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("010_raw_material_month_closing.sql", include_str!("../../../migrations/010_raw_material_month_closing.sql")),
     ("011_raw_material_closing_audit.sql", include_str!("../../../migrations/011_raw_material_closing_audit.sql")),
     ("012_guard_closed_material_purchases.sql", include_str!("../../../migrations/012_guard_closed_material_purchases.sql")),
+    ("013_guard_finalized_financials.sql", include_str!("../../../migrations/013_guard_finalized_financials.sql")),
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
@@ -105,6 +106,24 @@ mod tests {
         conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-11-02 12:00:00')",[]).unwrap();
         conn.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL WHERE period_month='2025-10-01'",[]).unwrap();
         conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-10-02 12:00:00')",[]).unwrap();
+    }
+
+    #[test]
+    fn finalized_financials_are_protected_without_blocking_settlements() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        run(&conn).unwrap();
+        conn.execute("INSERT INTO waiters(full_name) VALUES('Test')",[]).unwrap();
+        conn.execute("INSERT INTO sales(waiter_id,total_amount,total_cost,created_at) VALUES(1,100,20,'2025-10-05 00:00:00')",[]).unwrap();
+        conn.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',25,'2025-10-05 00:00:00')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_month_closings(period_month,status,closed_at) VALUES('2025-10-01','closed',datetime('now'))",[]).unwrap();
+        assert!(conn.execute("UPDATE sales SET total_amount=101 WHERE id=1",[]).is_err());
+        assert!(conn.execute("UPDATE sales SET is_reversed=1 WHERE id=1",[]).is_err());
+        assert!(conn.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',5,'2025-10-06 00:00:00')",[]).is_err());
+        assert!(conn.execute("DELETE FROM expenses WHERE id=1",[]).is_err());
+        conn.execute("UPDATE sales SET is_settled=1 WHERE id=1",[]).unwrap();
+        conn.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL WHERE period_month='2025-10-01'",[]).unwrap();
+        conn.execute("UPDATE sales SET total_amount=101 WHERE id=1",[]).unwrap();
     }
 
 }
