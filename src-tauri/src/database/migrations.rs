@@ -91,4 +91,20 @@ mod tests {
         assert_eq!(exists, 0);
     }
 
+    #[test]
+    fn finalized_month_protects_purchases_across_eat_boundary() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        run(&conn).unwrap();
+        conn.execute("INSERT INTO raw_materials(name,unit) VALUES('Oil','L')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,2,100,200,'2025-09-30 21:30:00')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_month_closings(period_month,status,closed_at) VALUES('2025-10-01','closed',datetime('now'))",[]).unwrap();
+        assert!(conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-10-01 13:00:00')",[]).is_err());
+        assert!(conn.execute("UPDATE raw_material_purchases SET total_cost=201 WHERE id=1",[]).is_err());
+        assert!(conn.execute("DELETE FROM raw_material_purchases WHERE id=1",[]).is_err());
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-11-02 12:00:00')",[]).unwrap();
+        conn.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL WHERE period_month='2025-10-01'",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-10-02 12:00:00')",[]).unwrap();
+    }
+
 }
