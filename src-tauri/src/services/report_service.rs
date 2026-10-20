@@ -38,7 +38,24 @@ pub struct MonthlyEstimatedProfit {
 /// The existing purchase-based financial report remains available for
 /// operational trends; this method never invents a closing stock value.
 pub fn monthly_estimated_profit(conn: &Connection, year: i32, month: u32) -> AppResult<MonthlyEstimatedProfit> {
-    let (start, end) = month_range(year, month)?;
+    // Convert Ethiopia-local month boundaries to the UTC timestamps stored by SQLite.
+    // Existing general-purpose reports retain their original date semantics.
+    use chrono::{FixedOffset, TimeZone};
+    let local_start = NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| AppError::Validation("invalid year/month".into()))?;
+    let local_next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }.ok_or_else(|| AppError::Validation("invalid year/month".into()))?;
+    let offset = FixedOffset::east_opt(3 * 3600).unwrap();
+    let utc_boundary = |day: NaiveDate| offset
+        .from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap())
+        .single().unwrap().with_timezone(&chrono::Utc)
+        .format("%Y-%m-%d %H:%M:%S").to_string();
+    let start = utc_boundary(local_start);
+    let end = (local_next.and_hms_opt(0,0,0).unwrap() - chrono::Duration::hours(3)
+        - chrono::Duration::seconds(1)).format("%Y-%m-%d %H:%M:%S").to_string();
     let purchases = financial_service::calculate_profit(conn, Some(&start), Some(&end))?;
     let month_key = format!("{year:04}-{month:02}-01");
     let status: Option<String> = conn.query_row(
