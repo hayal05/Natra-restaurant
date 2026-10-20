@@ -2,7 +2,7 @@
 //! sales mix, and cash flow.
 
 use chrono::{Datelike, NaiveDate};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
@@ -19,6 +19,53 @@ fn month_range(year: i32, month: u32) -> AppResult<(String, String)> {
 pub fn monthly_report(conn: &Connection, year: i32, month: u32) -> AppResult<ProfitSummary> {
     let (start, end) = month_range(year, month)?;
     financial_service::calculate_profit(conn, Some(&start), Some(&end))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonthlyEstimatedProfit {
+    pub status: String,
+    pub sales: f64,
+    pub ready_made_costs: f64,
+    pub raw_material_purchases: f64,
+    pub opening_stock_value: Option<f64>,
+    pub closing_stock_value: Option<f64>,
+    pub raw_material_cost_used: Option<f64>,
+    pub other_expenses: f64,
+    pub estimated_net_profit: Option<f64>,
+}
+
+/// Only finalized material closings can yield an estimated net profit.
+/// The existing purchase-based financial report remains available for
+/// operational trends; this method never invents a closing stock value.
+pub fn monthly_estimated_profit(conn: &Connection, year: i32, month: u32) -> AppResult<MonthlyEstimatedProfit> {
+    let (start, end) = month_range(year, month)?;
+    let purchases = financial_service::calculate_profit(conn, Some(&start), Some(&end))?;
+    let month_key = format!("{year:04}-{month:02}-01");
+    let status: Option<String> = conn.query_row(
+        "SELECT status FROM raw_material_month_closings WHERE period_month = ?1",
+        [&month_key], |r| r.get(0)
+    ).optional()?;
+    let finalized = status.as_deref() == Some("closed");
+    let (opening, closing, used, estimated) = if finalized {
+        let (opening, bought, closing): (f64, f64, f64) = conn.query_row(
+            "SELECT COALESCE(SUM(l.opening_value),0),COALESCE(SUM(l.purchased_value),0),COALESCE(SUM(l.closing_value),0)
+             FROM raw_material_month_closing_lines l
+             JOIN raw_material_month_closings c ON c.id=l.closing_id
+             WHERE c.period_month=?1 AND c.status='closed'",
+            [&month_key], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        )?;
+        let consumed = opening + bought - closing;
+        let profit = purchases.sales - purchases.ready_made_costs - consumed - purchases.other_expenses;
+        (Some(opening),Some(closing),Some(consumed),Some(profit))
+    } else { (None,None,None,None) };
+    Ok(MonthlyEstimatedProfit {
+        status: if finalized { "finalized".into() } else { "pending_closing".into() },
+        sales: purchases.sales, ready_made_costs: purchases.ready_made_costs,
+        raw_material_purchases: purchases.raw_material_costs,
+        opening_stock_value: opening, closing_stock_value: closing,
+        raw_material_cost_used: used, other_expenses: purchases.other_expenses,
+        estimated_net_profit: estimated,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +174,28 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         migrations::run(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn estimated_profit_only_after_month_closing() {
+        use crate::services::{month_closing_service, raw_material_service};
+        let mut conn = db();
+        let meat = raw_material_service::create_raw_material(&conn, "Meat", "kg").unwrap();
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(?1,20,300,6000,'2025-10-05 00:00:00')", [meat.id]).unwrap();
+        conn.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Utilities',100,'2025-10-10 00:00:00')", []).unwrap();
+        let pending = monthly_estimated_profit(&conn, 2025,10).unwrap();
+        assert_eq!(pending.status,"pending_closing");
+        assert!(pending.estimated_net_profit.is_none());
+        month_closing_service::save_draft(&mut conn,"2025-10-01",&[(meat.id,5.0)]).unwrap();
+        assert!(monthly_estimated_profit(&conn,2025,10).unwrap().estimated_net_profit.is_none());
+        month_closing_service::close_month(&mut conn,"2025-10-01").unwrap();
+        let finished = monthly_estimated_profit(&conn,2025,10).unwrap();
+        assert_eq!(finished.status,"finalized");
+        assert_eq!(finished.raw_material_cost_used,Some(4500.0));
+        assert_eq!(finished.closing_stock_value,Some(1500.0));
+        assert_eq!(finished.estimated_net_profit,Some(-4600.0));
+        month_closing_service::reopen_month(&mut conn,"2025-10-01","Correct material count").unwrap();
+        assert!(monthly_estimated_profit(&conn,2025,10).unwrap().estimated_net_profit.is_none());
     }
 
     #[test]
