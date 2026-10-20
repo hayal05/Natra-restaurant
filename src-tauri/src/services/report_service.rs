@@ -216,6 +216,18 @@ mod tests {
     }
 
     #[test]
+    fn monthly_estimate_uses_eat_expense_boundaries() {
+        let c = db();
+        c.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',15,'2025-09-30 21:30:00')",[]).unwrap();
+        c.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',25,'2025-10-31 20:30:00')",[]).unwrap();
+        c.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',35,'2025-10-31 21:30:00')",[]).unwrap();
+        let october = monthly_estimated_profit(&c,2025,10).unwrap();
+        assert_eq!(october.other_expenses,40.0);
+        let november = monthly_estimated_profit(&c,2025,11).unwrap();
+        assert_eq!(november.other_expenses,35.0);
+    }
+
+    #[test]
     fn month_range_covers_full_calendar_month() {
         let (start, end) = month_range(2026, 2).unwrap();
         assert_eq!(start, "2026-02-01 00:00:00");
