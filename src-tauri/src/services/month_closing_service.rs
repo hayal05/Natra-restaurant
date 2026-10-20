@@ -329,6 +329,47 @@ mod tests {
     }
 
     #[test]
+    fn save_close_carry_forward_and_reopen() {
+        let mut c = db();
+        let meat = raw_material_service::create_raw_material(&c,"Meat","kg").unwrap();
+        c.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(?1,20,300,6000,'2025-10-05 00:00:00')",[meat.id]).unwrap();
+        let draft = save_draft(&mut c,"2025-10-01",&[(meat.id,5.0)]).unwrap();
+        assert_eq!(draft.status,"draft");
+        assert_eq!(draft.lines[0].closing_value,1500.0);
+        let done = close_month(&mut c,"2025-10-01").unwrap();
+        assert_eq!(done.lines[0].consumed_value,4500.0);
+        assert!(close_month(&mut c,"2025-10-01").is_err());
+        assert!(save_draft(&mut c,"2025-10-01",&[(meat.id,4.0)]).is_err());
+        let november = preview(&c,"2025-11-01").unwrap();
+        assert_eq!(november[0].opening_value,1500.0);
+        assert_eq!(november[0].opening_quantity,5.0);
+        assert!(reopen_month(&mut c,"2025-10-01","").is_err());
+        reopen_month(&mut c,"2025-10-01","Correct count").unwrap();
+        assert!(preview(&c,"2025-11-01").is_err());
+        assert_eq!(save_draft(&mut c,"2025-10-01",&[(meat.id,4.0)]).unwrap().lines[0].closing_value,1200.0);
+        assert_eq!(close_month(&mut c,"2025-10-01").unwrap().lines[0].consumed_value,4800.0);
+        let count:i64=c.query_row("SELECT COUNT(*) FROM raw_material_closing_audit",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,1);
+    }
+
+    #[test]
+    fn invalid_drafts_roll_back_and_gaps_are_rejected() {
+        let mut c = db();
+        let meat = raw_material_service::create_raw_material(&c,"Meat","kg").unwrap();
+        c.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(?1,10,50,500,'2025-10-05 00:00:00')",[meat.id]).unwrap();
+        assert!(save_draft(&mut c,"2025-10-01",&[(meat.id,11.0)]).is_err());
+        let count:i64=c.query_row("SELECT COUNT(*) FROM raw_material_month_closings",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,0);
+        save_draft(&mut c,"2025-10-01",&[(meat.id,3.0)]).unwrap();
+        assert!(save_draft(&mut c,"2025-12-01",&[(meat.id,0.0)]).is_err());
+        assert!(save_draft(&mut c,"2025-09-01",&[(meat.id,0.0)]).is_err());
+        close_month(&mut c,"2025-10-01").unwrap();
+        save_draft(&mut c,"2025-11-01",&[(meat.id,3.0)]).unwrap();
+        close_month(&mut c,"2025-11-01").unwrap();
+        assert!(reopen_month(&mut c,"2025-10-01","Correction request").is_err());
+    }
+
+    #[test]
     fn east_africa_month_boundary() {
         let c = db();
         let m = raw_material_service::create_raw_material(&c,"Oil","L").unwrap();
