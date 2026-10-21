@@ -6,10 +6,21 @@ import { renderTable } from "../components/table.js";
 import { formatMoney } from "../utils/currency.js";
 
 export const title = "Raw Material Purchase History";
+// Never compare locale-formatted dates. Windows WebView may format en-CA
+// as MM/DD/YYYY rather than YYYY-MM-DD, breaking month/date filtering.
+const eatParts = date => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Addis_Ababa", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(date);
+  const part = type => parts.find(p => p.type === type)?.value ?? "";
+  return { year: part("year"), month: part("month"), day: part("day") };
+};
 const eatDate = value => {
-  const utc = new Date(String(value).replace(" ","T")+"Z");
-  return Number.isNaN(utc.getTime()) ? String(value).slice(0,10) :
-    new Intl.DateTimeFormat("en-CA",{timeZone:"Africa/Addis_Ababa",year:"numeric",month:"2-digit",day:"2-digit"}).format(utc);
+  const raw = String(value ?? "").trim();
+  const utc = new Date(raw.includes("T") ? (raw.endsWith("Z") ? raw : raw + "Z") : raw.replace(" ", "T") + "Z");
+  if (Number.isNaN(utc.getTime())) return raw.slice(0, 10);
+  const { year, month, day } = eatParts(utc);
+  return `${year}-${month}-${day}`;
 };
 const quoteCsv = v => '"'+String(v??"").replace(/"/g,'""')+'"';
 const csvValue = records => [
@@ -60,7 +71,8 @@ export async function render(container) {
     const option=document.createElement("option");option.value=String(m.id);option.textContent=m.name;
     el("purchase-material").append(option);
   }
-  const current=new Intl.DateTimeFormat("en-CA",{timeZone:"Africa/Addis_Ababa",year:"numeric",month:"2-digit"}).format(new Date());
+  const { year, month: currentMonth } = eatParts(new Date());
+  const current = `${year}-${currentMonth}`;
   el("purchase-month").value=current;
   let visible=[];
   const refresh=()=>{
@@ -81,8 +93,10 @@ export async function render(container) {
       ],rows:visible,emptyMessage:"No purchases match the selected filters.",getRowKey:r=>r.id
     });
   };
-  for(const id of ["purchase-month","purchase-from","purchase-to","purchase-material","purchase-search"])
+  for(const id of ["purchase-month","purchase-from","purchase-to","purchase-material","purchase-search"]){
     el(id).addEventListener("input",refresh);
+    el(id).addEventListener("change",refresh);
+  }
   el("purchase-clear").onclick=()=>{for(const id of ["purchase-month","purchase-from","purchase-to","purchase-search"])el(id).value="";el("purchase-material").value="";refresh();};
   el("purchase-export").onclick=()=>{
     const blob=new Blob(["\uFEFF",csvValue(visible)],{type:"text/csv;charset=utf-8"});
