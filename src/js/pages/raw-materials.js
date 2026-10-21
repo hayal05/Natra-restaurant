@@ -31,10 +31,7 @@ export async function render(container) {
       <div class="card-header"><span class="card-title">Materials</span></div>
       <div id="materials-table"></div>
     </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">Recent purchases</span></div>
-      <div id="purchases-table"></div>
-    </div>
+
   `;
 
   // The router moves this page's DOM out of `container` into the live outlet
@@ -44,7 +41,6 @@ export async function render(container) {
   const els = {
     statRow: container.querySelector("#stat-row"),
     materialsTable: container.querySelector("#materials-table"),
-    purchasesTable: container.querySelector("#purchases-table"),
   };
 
   const addBtn = document.createElement("button");
@@ -56,7 +52,11 @@ export async function render(container) {
   closingBtn.type = "button";
   closingBtn.textContent = "Month-End Closing";
   closingBtn.addEventListener("click", () => navigate("/raw-materials/closing"));
-  setHeaderActions(document, [closingBtn, addBtn]);
+  const historyBtn = document.createElement("button");
+  historyBtn.className = "btn btn-secondary";
+  historyBtn.textContent = "Purchase History";
+  historyBtn.addEventListener("click", () => navigate("/raw-materials/purchases"));
+  setHeaderActions(document, [historyBtn, closingBtn, addBtn]);
 
   await loadAll(els);
 }
@@ -81,7 +81,6 @@ async function loadAll(els) {
   statRow.appendChild(createStatCard({ label: "Total raw-material cost", value: formatMoney(totalCost, currency), tone: "rust" }));
   statRow.appendChild(createStatCard({ label: "Purchases logged", value: String(purchases.length) }));
 
-  const materialsById = new Map(materials.map((m) => [m.id, m]));
 
   renderTable(els.materialsTable, {
     columns: [
@@ -104,19 +103,7 @@ async function loadAll(els) {
     getRowKey: (m) => m.id,
   });
 
-  renderTable(els.purchasesTable, {
-    columns: [
-      { key: "purchase_date", label: "Date", format: (p) => formatDate(p.purchase_date) },
-      { key: "material", label: "Material", format: (p) => materialsById.get(p.raw_material_id)?.name ?? `#${p.raw_material_id}` },
-      { key: "quantity", label: "Qty", numeric: true, format: (p) => `${p.quantity} ${materialsById.get(p.raw_material_id)?.unit ?? ""}` },
-      { key: "unit_cost", label: "Unit cost", numeric: true, format: (p) => formatMoney(p.unit_cost, currency) },
-      { key: "total_cost", label: "Total", numeric: true, format: (p) => formatMoney(p.total_cost, currency) },
-      { key: "supplier", label: "Supplier", format: (p) => p.supplier || "—" },
-    ],
-    rows: purchases,
-    emptyMessage: "No purchases logged yet.",
-    getRowKey: (p) => p.id,
-  });
+
 }
 
 function openMaterialModal(els) {
