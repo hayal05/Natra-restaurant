@@ -86,6 +86,7 @@ pub fn run() {
             commands::reports::cash_flow_by_year,
             commands::dashboard::dashboard_summary,
             commands::settings::get_settings,
+            commands::settings::get_installation_id,
             commands::settings::update_general_settings,
             commands::settings::enable_sync,
             commands::settings::disable_sync,
