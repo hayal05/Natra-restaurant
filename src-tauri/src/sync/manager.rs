@@ -8,6 +8,7 @@
 //!   2. connects, pushes, pulls
 //!   3. advances the cursor and reports what happened
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -18,6 +19,27 @@ use crate::errors::AppResult;
 use crate::services::settings_service;
 
 use super::turso::{self, TursoClient};
+
+// Shared by all sync entry points in this desktop process.
+// A drop guard guarantees release on success, error, or cancellation.
+static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
+
+struct SyncGuard;
+
+impl SyncGuard {
+    fn acquire() -> Option<Self> {
+        SYNC_RUNNING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        SYNC_RUNNING.store(false, Ordering::Release);
+    }
+}
 
 /// How often the background loop attempts a sync cycle while the app
 /// is open. Deliberately not configurable from the UI (yet) — this is
@@ -77,6 +99,9 @@ pub fn start_background(app: AppHandle) {
 /// background loop and the manual `sync_now` command — a manual sync
 /// is just this function called out of band.
 pub async fn run_once(db: &Db) -> AppResult<SyncReport> {
+    let _guard = SyncGuard::acquire().ok_or_else(|| {
+        crate::errors::AppError::Sync("synchronization already in progress".into())
+    })?;
     let settings = {
         let conn = db.lock();
         settings_service::get_settings(&conn)?
@@ -145,6 +170,14 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         migrations::run(&conn).unwrap();
         Db(std::sync::Mutex::new(conn))
+    }
+
+    #[test]
+    fn sync_guard_blocks_overlap_and_releases_on_drop() {
+        let first = SyncGuard::acquire().expect("first sync can begin");
+        assert!(SyncGuard::acquire().is_none(), "overlapping sync is rejected");
+        drop(first);
+        assert!(SyncGuard::acquire().is_some(), "lock is released on completion");
     }
 
     #[test]
