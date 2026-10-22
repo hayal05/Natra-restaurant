@@ -53,6 +53,8 @@ async function bootstrap(){
     "/waiters":{loader:()=>import("./pages/waiters.js"),title:"Waiters"},
     "/items":{loader:()=>import("./pages/items.js"),title:"Items"},
     "/raw-materials":{loader:()=>import("./pages/raw-materials.js"),title:"Raw materials"},
+    "/raw-materials/purchases":{loader:()=>import("./pages/purchase-history.js"),title:"Purchase History"},
+    "/raw-materials/closing":{loader:()=>import("./pages/month-closing.js"),title:"Month-End Closing"},
     "/expenses":{loader:()=>import("./pages/expenses.js"),title:"Expenses"},
     "/reports":{loader:()=>import("./pages/reports.js"),title:"Reports"},
     "/archives":{loader:()=>import("./pages/archives.js"),title:"Archives"},

@@ -6,13 +6,19 @@ use tauri::State;
 use crate::database::Db;
 use crate::errors::AppResult;
 use crate::services::financial_service::ProfitSummary;
-use crate::services::report_service::{self, CashFlowMonth, ProductPerformance, SalesMixEntry};
+use crate::services::report_service::{self, CashFlowMonth, ProductPerformance, SalesMixEntry, MonthlyEstimatedProfit};
 
 /// Revenue/costs/expenses/profit for one calendar month.
 #[tauri::command]
 pub fn monthly_report(db: State<Db>, year: i32, month: u32) -> AppResult<ProfitSummary> {
     let conn = db.lock();
     report_service::monthly_report(&conn, year, month)
+}
+
+#[tauri::command]
+pub fn monthly_estimated_profit(db: State<Db>, year: i32, month: u32) -> AppResult<MonthlyEstimatedProfit> {
+    let conn = db.lock();
+    report_service::monthly_estimated_profit(&conn, year, month)
 }
 
 /// Per-item quantity sold / revenue / cost, optionally scoped to a date range.

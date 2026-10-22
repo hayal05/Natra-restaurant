@@ -27,7 +27,7 @@ export async function render(container) {
     <div class="page-heading">
       <div>
         <h1>Reports</h1>
-        <p class="page-subtitle">Daily revenue and product sales, plus monthly costs and cash flow.</p>
+        <p class="page-subtitle">Daily provisional results and product sales, plus monthly finalized profit and cash flow.</p>
       </div>
     </div>
     <div class="card" id="daily-report-card">
@@ -156,7 +156,7 @@ async function loadDailyReport(els, state) {
   statRow.appendChild(createStatCard({ label: "Total cost", value: formatMoney(totalCost, currency) }));
   statRow.appendChild(
     createStatCard({
-      label: "Net profit",
+      label: "Provisional profit",
       value: formatMoney(summary.profit, currency),
       tone: summary.profit >= 0 ? "sage" : "rust",
     })
@@ -217,7 +217,7 @@ function printDailyReport(els, state) {
   statRow.appendChild(createStatCard({ label: "Total cost", value: formatMoney(totalCost, currency) }));
   statRow.appendChild(
     createStatCard({
-      label: "Net profit",
+      label: "Provisional profit",
       value: formatMoney(summary.profit, currency),
       tone: summary.profit >= 0 ? "sage" : "rust",
     })
@@ -256,7 +256,7 @@ async function loadReport(els, { year, month }) {
   let summary, performance, mix, cashFlow;
   try {
     [summary, performance, mix, cashFlow] = await Promise.all([
-      withErrorToast(() => api.reports.monthly(year, month)),
+      withErrorToast(() => api.reports.monthlyEstimated(year, month)),
       withErrorToast(() => api.reports.productPerformance(from, to)),
       withErrorToast(() => api.reports.salesMix(from, to)),
       withErrorToast(() => api.reports.cashFlowByYear(year)),
@@ -269,15 +269,18 @@ async function loadReport(els, { year, month }) {
   statRow.innerHTML = "";
   statRow.appendChild(createStatCard({ label: "Revenue", value: formatMoney(summary.sales, currency) }));
   statRow.appendChild(createStatCard({ label: "Ready-made costs", value: formatMoney(summary.ready_made_costs, currency) }));
-  statRow.appendChild(createStatCard({ label: "Raw-material costs", value: formatMoney(summary.raw_material_costs, currency) }));
-  statRow.appendChild(
-    createStatCard({
-      label: "Profit",
-      value: formatMoney(summary.profit, currency),
-      tone: summary.profit >= 0 ? "sage" : "rust",
-      sublabel: `after ${formatMoney(summary.other_expenses, currency)} other expenses`,
-    })
-  );
+  const finalized = summary.status === "finalized";
+  statRow.appendChild(createStatCard({
+    label: finalized ? "Materials consumed" : "Raw-material purchases",
+    value: formatMoney(finalized ? summary.raw_material_cost_used : summary.raw_material_purchases, currency),
+    sublabel: finalized ? `Opening ${formatMoney(summary.opening_stock_value,currency)} · Closing ${formatMoney(summary.closing_stock_value,currency)}` : "Awaiting month-end stock closing",
+  }));
+  statRow.appendChild(createStatCard({
+    label: "Estimated Net Profit",
+    value: finalized ? formatMoney(summary.estimated_net_profit, currency) : "Pending Closing",
+    tone: !finalized ? undefined : summary.estimated_net_profit >= 0 ? "sage" : "rust",
+    sublabel: finalized ? `Finalized · After ${formatMoney(summary.other_expenses,currency)} other expenses` : "Finalize Raw Materials → Month-End Closing first",
+  }));
 
   renderTable(els.performanceTable, {
     columns: [

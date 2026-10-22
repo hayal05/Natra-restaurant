@@ -7,3 +7,4 @@ pub mod report_service;
 pub mod sales_service;
 pub mod settings_service;
 pub mod waiter_service;
+pub mod month_closing_service;

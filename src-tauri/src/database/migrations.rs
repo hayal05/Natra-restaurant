@@ -13,6 +13,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("007_login_security.sql", include_str!("../../../migrations/007_login_security.sql")),
     ("008_waiter_profile_photo.sql", include_str!("../../../migrations/008_waiter_profile_photo.sql")),
     ("009_sale_reversal.sql", include_str!("../../../migrations/009_sale_reversal.sql")),
+    ("010_raw_material_month_closing.sql", include_str!("../../../migrations/010_raw_material_month_closing.sql")),
+    ("011_raw_material_closing_audit.sql", include_str!("../../../migrations/011_raw_material_closing_audit.sql")),
+    ("012_guard_closed_material_purchases.sql", include_str!("../../../migrations/012_guard_closed_material_purchases.sql")),
+    ("013_guard_finalized_financials.sql", include_str!("../../../migrations/013_guard_finalized_financials.sql")),
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
@@ -30,8 +34,17 @@ pub fn run(conn: &Connection) -> AppResult<()> {
             |row| row.get(0),
         )?;
         if already_applied { continue; }
-        conn.execute_batch(sql)?;
-        conn.execute("INSERT INTO schema_migrations (filename) VALUES (?1)", [filename])?;
+        conn.execute_batch("SAVEPOINT natra_migration")?;
+        let applied = (|| -> AppResult<()> {
+            conn.execute_batch(sql)?;
+            conn.execute("INSERT INTO schema_migrations (filename) VALUES (?1)", [filename])?;
+            Ok(())
+        })();
+        if let Err(err) = applied {
+            conn.execute_batch("ROLLBACK TO natra_migration; RELEASE natra_migration")?;
+            return Err(err);
+        }
+        conn.execute_batch("RELEASE natra_migration")?;
     }
     Ok(())
 }
@@ -50,4 +63,67 @@ mod tests {
         ).unwrap();
         assert_eq!(profile_photo_column, 1);
     }
+    #[test]
+    fn closing_schema_constraints_and_idempotence() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        run(&conn).unwrap();
+        run(&conn).unwrap();
+        conn.execute("INSERT INTO raw_materials(name,unit) VALUES ('Meat','kg')", []).unwrap();
+        conn.execute("INSERT INTO raw_material_month_closings(period_month) VALUES ('2026-10-01')", []).unwrap();
+        assert!(conn.execute("INSERT INTO raw_material_month_closings(period_month) VALUES ('2026-10-01')", []).is_err());
+        assert!(conn.execute("INSERT INTO raw_material_month_closings(period_month) VALUES ('2026-10-15')", []).is_err());
+        conn.execute("INSERT INTO raw_material_month_closing_lines(closing_id,raw_material_id,purchased_quantity,purchased_value,remaining_quantity,closing_value) VALUES(1,1,20,6000,5,1500)", []).unwrap();
+        assert!(conn.execute("INSERT INTO raw_material_month_closing_lines(closing_id,raw_material_id) VALUES(1,1)", []).is_err());
+        assert!(conn.execute("UPDATE raw_material_month_closing_lines SET remaining_quantity=21 WHERE id=1", []).is_err());
+        assert!(conn.execute("UPDATE raw_material_month_closings SET status='closed' WHERE id=1", []).is_err());
+        conn.execute("UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now') WHERE id=1", []).unwrap();
+        let value: f64 = conn.query_row("SELECT closing_value FROM raw_material_month_closing_lines WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(value, 1500.0);
+    }
+
+    #[test]
+    fn failed_sql_batch_rolls_back_in_savepoint() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("SAVEPOINT natra_migration").unwrap();
+        assert!(conn.execute_batch("CREATE TABLE should_not_remain(x INTEGER); NOT VALID SQL;").is_err());
+        conn.execute_batch("ROLLBACK TO natra_migration; RELEASE natra_migration").unwrap();
+        let exists: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='should_not_remain'", [], |r| r.get(0)).unwrap();
+        assert_eq!(exists, 0);
+    }
+
+    #[test]
+    fn finalized_month_protects_purchases_across_eat_boundary() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        run(&conn).unwrap();
+        conn.execute("INSERT INTO raw_materials(name,unit) VALUES('Oil','L')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,2,100,200,'2025-09-30 21:30:00')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_month_closings(period_month,status,closed_at) VALUES('2025-10-01','closed',datetime('now'))",[]).unwrap();
+        assert!(conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-10-01 13:00:00')",[]).is_err());
+        assert!(conn.execute("UPDATE raw_material_purchases SET total_cost=201 WHERE id=1",[]).is_err());
+        assert!(conn.execute("DELETE FROM raw_material_purchases WHERE id=1",[]).is_err());
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-11-02 12:00:00')",[]).unwrap();
+        conn.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL WHERE period_month='2025-10-01'",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,purchase_date) VALUES(1,1,100,100,'2025-10-02 12:00:00')",[]).unwrap();
+    }
+
+    #[test]
+    fn finalized_financials_are_protected_without_blocking_settlements() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        run(&conn).unwrap();
+        conn.execute("INSERT INTO waiters(full_name) VALUES('Test')",[]).unwrap();
+        conn.execute("INSERT INTO sales(waiter_id,total_amount,total_cost,created_at) VALUES(1,100,20,'2025-10-05 00:00:00')",[]).unwrap();
+        conn.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',25,'2025-10-05 00:00:00')",[]).unwrap();
+        conn.execute("INSERT INTO raw_material_month_closings(period_month,status,closed_at) VALUES('2025-10-01','closed',datetime('now'))",[]).unwrap();
+        assert!(conn.execute("UPDATE sales SET total_amount=101 WHERE id=1",[]).is_err());
+        assert!(conn.execute("UPDATE sales SET is_reversed=1 WHERE id=1",[]).is_err());
+        assert!(conn.execute("INSERT INTO expenses(category,amount,expense_date) VALUES('Rent',5,'2025-10-06 00:00:00')",[]).is_err());
+        assert!(conn.execute("DELETE FROM expenses WHERE id=1",[]).is_err());
+        conn.execute("UPDATE sales SET is_settled=1 WHERE id=1",[]).unwrap();
+        conn.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL WHERE period_month='2025-10-01'",[]).unwrap();
+        conn.execute("UPDATE sales SET total_amount=101 WHERE id=1",[]).unwrap();
+    }
+
 }
