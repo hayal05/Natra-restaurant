@@ -1,5 +1,4 @@
-//! Orchestrates one full sync cycle (push then pull) and the periodic
-//! background loop that drives it automatically when sync is enabled.
+//! Orchestrates a manual push-and-pull synchronization cycle.
 //!
 //! Nothing here talks to `rusqlite` types directly beyond the tiny
 //! `sync_meta` cursor read/write below — the heavy lifting is
@@ -9,10 +8,8 @@
 //!   3. advances the cursor and reports what happened
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
 
 use crate::database::Db;
 use crate::errors::AppResult;
@@ -41,13 +38,6 @@ impl Drop for SyncGuard {
     }
 }
 
-/// How often the background loop attempts a sync cycle while the app
-/// is open. Deliberately not configurable from the UI (yet) — this is
-/// a restaurant POS, not a chat app; a few minutes of staleness on a
-/// second device is fine, and anything faster just burns battery/data
-/// for no benefit offline-first apps care about.
-const SYNC_INTERVAL: Duration = Duration::from_secs(120);
-
 /// Outcome of one sync cycle, returned to the frontend by the
 /// `sync_now` command so a "Sync" button can show something more
 /// useful than a spinner.
@@ -69,35 +59,8 @@ impl SyncReport {
     }
 }
 
-/// Start the background loop as a fire-and-forget task on Tauri's
-/// async runtime. Called once from `lib.rs`'s `setup()`; the loop
-/// checks `settings.sync_enabled` on every tick, so enabling/disabling
-/// sync from the Settings page takes effect on the next tick without
-/// needing to restart the loop itself.
-pub fn start_background(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(SYNC_INTERVAL);
-        loop {
-            interval.tick().await;
-            let db = app.state::<Db>();
-            match run_once(&db).await {
-                Ok(report) if report.ran => {
-                    if let Some(err) = &report.error {
-                        eprintln!("[sync] cycle failed: {err}");
-                    } else {
-                        eprintln!("[sync] pushed {} pulled {}", report.pushed, report.pulled);
-                    }
-                }
-                Ok(_) => {} // sync disabled — nothing to log every two minutes
-                Err(e) => eprintln!("[sync] could not read settings: {e}"),
-            }
-        }
-    });
-}
-
-/// Run exactly one push+pull cycle right now. Used by both the
-/// background loop and the manual `sync_now` command — a manual sync
-/// is just this function called out of band.
+/// Run a single push-and-pull cycle only when explicitly requested.
+/// Concurrent attempts are rejected by SyncGuard.
 pub async fn run_once(db: &Db) -> AppResult<SyncReport> {
     let _guard = SyncGuard::acquire().ok_or_else(|| {
         crate::errors::AppError::Sync("synchronization already in progress".into())
