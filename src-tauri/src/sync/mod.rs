@@ -12,11 +12,11 @@
 //! - `conflict` decides who wins when the same row changed on two
 //!   devices (last-write-wins on `updated_at`).
 //! - `manager` ties the above into one push+pull cycle and the
-//!   periodic background loop that runs it automatically.
+//!   manual user-initiated synchronization.
 
 pub mod conflict;
 pub mod manager;
 pub mod queue;
 pub mod turso;
 
-pub use manager::{run_once, start_background, SyncReport};
+pub use manager::{run_once, SyncReport};
