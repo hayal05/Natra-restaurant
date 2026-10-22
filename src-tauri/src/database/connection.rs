@@ -21,6 +21,7 @@ impl Db {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
 
         crate::database::migrations::run(&conn)?;
+        ensure_installation_id(&conn)?;
 
         Ok(Db(Mutex::new(conn)))
     }
@@ -31,6 +32,7 @@ impl Db {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         crate::database::migrations::run(&conn)?;
+        ensure_installation_id(&conn)?;
         Ok(Db(Mutex::new(conn)))
     }
 
@@ -63,6 +65,37 @@ impl Db {
     }
 }
 
+/// Reuse the device_id key already reserved by migration 005.
+/// The ID belongs to the installation, never to the signed-in user.
+/// SQLite's randomblob() supplies random bytes without introducing a new crate.
+fn ensure_installation_id(conn: &Connection) -> AppResult<String> {
+    let existing: Option<String> = conn.query_row(
+        "SELECT value FROM sync_meta WHERE key = 'device_id'",
+        [],
+        |row| row.get(0),
+    )?;
+    if let Some(id) = existing {
+        if !id.trim().is_empty() {
+            return Ok(id);
+        }
+    }
+
+    let mut bytes: Vec<u8> = conn.query_row("SELECT randomblob(16)", [], |row| row.get(0))?;
+    // RFC 4122 / RFC 9562 UUID version 4 and RFC variant.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let id = format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32]
+    );
+    conn.execute(
+        "UPDATE sync_meta SET value = ?1 WHERE key = 'device_id' AND (value IS NULL OR trim(value) = '')",
+        [&id],
+    )?;
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,4 +120,29 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
     }
+    #[test]
+    fn installation_id_is_uuid_v4_and_survives_reinitialization() {
+        let db = Db::init_in_memory().unwrap();
+        let conn = db.lock();
+        let first = ensure_installation_id(&conn).unwrap();
+        assert_eq!(first.len(), 36);
+        assert_eq!(first.chars().nth(14), Some('4'));
+        assert!(matches!(first.chars().nth(19), Some('8' | '9' | 'a' | 'b')));
+        assert_eq!(first, ensure_installation_id(&conn).unwrap());
+        let saved: String = conn.query_row(
+            "SELECT value FROM sync_meta WHERE key='device_id'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(saved, first);
+    }
+
+    #[test]
+    fn independent_installations_have_different_ids() {
+        let first = Db::init_in_memory().unwrap();
+        let second = Db::init_in_memory().unwrap();
+        assert_ne!(
+            ensure_installation_id(&first.lock()).unwrap(),
+            ensure_installation_id(&second.lock()).unwrap()
+        );
+    }
+
 }
