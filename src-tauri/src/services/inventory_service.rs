@@ -141,14 +141,32 @@ pub fn list_items(conn: &Connection, filter: ItemFilter) -> AppResult<Vec<Item>>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+// Shared by activation and pricing changes; both save a complete item snapshot.
+fn enqueue_item_update(tx: &rusqlite::Transaction<'_>, item_id: i64) -> AppResult<Item> {
+    let item = tx.query_row("SELECT * FROM items WHERE id = ?1", [item_id], Item::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    crate::sync::queue::enqueue_cloud_event(
+        tx, "items", &format!("{installation_id}:{item_id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": item_id,
+            "item": item,
+        }),
+    )?;
+    Ok(item)
+}
+
 pub fn set_item_active(conn: &Connection, item_id: i64, is_active: bool) -> AppResult<()> {
-    let affected = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let affected = tx.execute(
         "UPDATE items SET is_active = ?1, updated_at = datetime('now') WHERE id = ?2",
         rusqlite::params![is_active, item_id],
     )?;
     if affected == 0 {
         return Err(AppError::NotFound(format!("item {item_id}")));
     }
+    enqueue_item_update(&tx, item_id)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -170,11 +188,14 @@ pub fn update_item_pricing(
     };
     updated.validate()?;
 
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "UPDATE items SET selling_price = ?1, purchase_cost = ?2, updated_at = datetime('now') WHERE id = ?3",
         rusqlite::params![selling_price, purchase_cost, item_id],
     )?;
-    Ok(conn.query_row("SELECT * FROM items WHERE id = ?1", [item_id], Item::from_row)?)
+    let item = enqueue_item_update(&tx, item_id)?;
+    tx.commit()?;
+    Ok(item)
 }
 
 #[cfg(test)]
@@ -292,6 +313,45 @@ mod tests {
             "SELECT COUNT(*) FROM items WHERE name='Unsaved'", [], |r| r.get(0)
         ).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn item_activation_and_pricing_enqueue_snapshots() {
+        let conn = db();
+        let item = create_item(&conn, NewItem {
+            category_id: None, name: "Tea".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(3.0), selling_price: 7.0,
+        }).unwrap();
+        set_item_active(&conn, item.id, false).unwrap();
+        update_item_pricing(&conn, item.id, 8.0, Some(3.0)).unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='items' ORDER BY rowid"
+        ).unwrap();
+        let payloads: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap()
+            .map(|r| r.unwrap()).collect();
+        assert_eq!(payloads.len(), 3);
+        let inactive: serde_json::Value = serde_json::from_str(&payloads[1]).unwrap();
+        let priced: serde_json::Value = serde_json::from_str(&payloads[2]).unwrap();
+        assert_eq!(inactive["item"]["is_active"], false);
+        assert_eq!(priced["item"]["selling_price"], 8.0);
+    }
+
+    #[test]
+    fn item_update_rolls_back_when_outbox_fails() {
+        let conn = db();
+        let item = create_item(&conn, NewItem {
+            category_id: None, name: "Tea".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(3.0), selling_price: 7.0,
+        }).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER stop_item_updates BEFORE INSERT ON cloud_outbox
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(set_item_active(&conn, item.id, false).is_err());
+        assert!(update_item_pricing(&conn, item.id, 8.0, Some(3.0)).is_err());
+        let saved = conn.query_row("SELECT * FROM items WHERE id=?1", [item.id], Item::from_row).unwrap();
+        assert!(saved.is_active);
+        assert_eq!(saved.selling_price, 7.0);
     }
 
     #[test]
