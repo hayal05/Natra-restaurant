@@ -1,31 +1,33 @@
-# Task 30 — Local outbox coverage audit (read-only)
+# Task 32 — Cloud outbox coverage review
 
-Audited branch: `feature/neon-sync-installation-id`. This is a static source audit, **not** a runtime or end-to-end sync test.
+Reviewed branch `feature/neon-sync-installation-id` after commit `68b23bf9`.
+Latest Windows CI: **passed** (run 40010659485). This verifies compilation and unit tests, **not live multi-device sync**.
 
-## Finding
+## Covered in production service paths
 
-`migrations/005_sync.sql` creates `sync_queue`. `src-tauri/src/sync/queue.rs` implements `enqueue()` plus tests, but **no production enqueue calls were found in the business-service files inspected below**. As a result, the existing outbox does **not currently provide reliable capture of business mutations**. Do not enable uploads or present sync as complete.
+All operations below enqueue an event in the **same SQLite transaction** as their local business changes. These paths have unit tests covering event capture and/or rollback.
 
-| Business operation | Mutation path(s) inspected | Outbox write in inspected path? |
+| Business operation | Service | Captured event |
 | --- | --- | --- |
-| Sales and line items | `services/sales_service.rs` (`sales`, `sale_items`) | No |
-| Sales reversals | `services/sales_service.rs` (`sales.is_reversed`) | No |
-| Waiter settlements | `services/waiter_service.rs` (`sales.is_settled`) | No |
-| Expenses | `services/financial_service.rs` (`expenses`) | No |
-| Raw-material setup and purchases | `services/raw_material_service.rs` (`raw_materials`, `raw_material_purchases`) | No |
-| Month-end draft, closing and reopen | `services/month_closing_service.rs` (`raw_material_month_closings`, `raw_material_month_closing_lines`, `raw_material_closing_audit`) | No |
-| Menu categories and items | `services/inventory_service.rs` (`categories`, `items`) | No |
-| Waiter creation and activation | `services/waiter_service.rs` (`waiters`) | No |
+| Category creation | inventory_service | categories |
+| Item creation, activation, pricing | inventory_service | items |
+| Waiter creation, activation | waiter_service | waiters |
+| Expense creation | financial_service | expenses |
+| Raw-material creation, purchase recording | raw_material_service | raw_materials, raw_material_purchases |
+| Sales checkout + all sale items | sales_service | sales (one bundled financial event) |
+| Sale reversal | sales_service | sale_reversals |
+| Waiter settlement | waiter_service | waiter_settlements |
+| Month closing: draft, finalization, reopen | month_closing_service | material_month_closings |
 
-## Implementation caveats
+## Gaps to resolve BEFORE connecting live upload/download
 
-1. Queue capture must be added **in the same SQLite transaction** as each real business mutation, not after commit; otherwise a crash can permanently lose events or produce orphaned outbox entries.
-2. The legacy queue uses a local auto-increment row ID and local integer `record_id`, plus `insert/update/delete` operations. The new PostgreSQL ledger uses UUID `event_id`, `upsert/delete`, and globally comparable entity identities. These formats need an explicit conversion and globally unique ID strategy; local auto-increment IDs from different POS installations can collide.
-3. Sales, line items, settlements, reversals, inventory costs and finalized month-end figures require **domain-specific merge rules**. Do not use last-write-wins for financial data.
-4. Verify trigger-driven, secondary and bulk mutations when adding outbox capture. A sale may affect multiple records that must sync together.
-5. `sync/queue.rs` tests exercise enqueue directly; they do not prove that POS mutations enqueue automatically. Existing sync manager is not evidence of a working Neon upload.
-6. This audit covers the named main Rust business-service paths and legacy queue; it does not establish exhaustive coverage of every command, trigger, import or maintenance path.
+1. **Cross-installation IDs and relationships:** Current events identify locally created entities with `installation_id:local_id`. Several payloads still carry local integer foreign keys. Download/apply must translate them through durable identity mappings, and updates of *downloaded* records must retain the original entity ID rather than accidentally attributing them to the editing installation. This is not implemented yet.
+2. **Financial event replay:** Remote application must make sales + lines, reversals, settlements, expenses, purchases and month-end changes exactly-once or idempotent as applicable; validate related entities and apply domain-specific rules. A cloud event UUID alone does not make local financial mutations safe.
+3. **Month closing draft/reopen snapshots:** Reopen currently sends an action/reason rather than the full closing lines; remote apply logic must handle that state transition and audit correctly. Month-closing lines and audits are not independently captured.
+4. **Settings and users:** `settings_service` changes restaurant profile and device sync/backup settings; `auth_service` changes local authentication state. No new Neon outbox capture was added to these paths. Define which fields are workspace-shared versus installation-local before syncing. **Never upload passwords, password hashes or cloud credentials as ordinary business events.**
+5. **Other write paths:** Command-layer direct SQL, backup restores, migrations and database triggers were not exhaustively audited. Do not claim total coverage until these are checked.
+6. **Not connected:** Actual upload, incremental pull, remote application, auth, session allowance enforcement in the live API, and the active Sync Now click path are not yet integrated.
 
-## Suggested next microtask
+## Practical next step
 
-Add a single, transaction-aware outbox helper accepting a stable UUID event ID, without activating uploads. Then connect one nonfinancial mutation path and test that business-row write and outbox receipt commit or roll back together. Audit all financial flows before enabling production sync.
+Before enabling cloud synchronization, add minimal durable mapping of cloud entity IDs to local IDs and use it consistently for remote records and subsequent edits. Reuse the existing outbox and pull cursor; avoid a second queue, background scheduler, or new backend.
