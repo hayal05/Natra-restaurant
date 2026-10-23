@@ -94,8 +94,8 @@ pub fn settle_waiter(conn: &Connection, waiter_id: i64) -> AppResult<usize> {
         let mut stmt = tx.prepare(
             "SELECT id FROM sales WHERE waiter_id = ?1 AND is_settled = 0 ORDER BY id"
         )?;
-        stmt.query_map([waiter_id], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?
+        let rows = stmt.query_map([waiter_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
     };
     if sale_ids.is_empty() {
         tx.commit()?;
