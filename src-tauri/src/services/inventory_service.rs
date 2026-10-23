@@ -4,7 +4,7 @@
 //! (via `NewItem::validate`) before it ever reaches the database, so
 //! callers get a clear validation message instead of a raw SQL error.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
@@ -101,8 +101,10 @@ pub fn create_item(conn: &Connection, new_item: NewItem) -> AppResult<Item> {
     let id = tx.last_insert_rowid();
     let item = tx.query_row("SELECT * FROM items WHERE id = ?1", [id], Item::from_row)?;
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let entity_id = format!("{installation_id}:{id}");
+    crate::database::entity_ids::register(&tx, "items", &entity_id, id)?;
     crate::sync::queue::enqueue_cloud_event(
-        &tx, "items", &format!("{installation_id}:{id}"), "upsert",
+        &tx, "items", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": id,
@@ -147,8 +149,22 @@ pub fn list_items(conn: &Connection, filter: ItemFilter) -> AppResult<Vec<Item>>
 fn enqueue_item_update(tx: &rusqlite::Transaction<'_>, item_id: i64) -> AppResult<Item> {
     let item = tx.query_row("SELECT * FROM items WHERE id = ?1", [item_id], Item::from_row)?;
     let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    // Imported items retain their original global identity when edited here.
+    // Existing local items without a mapping get one on their first edit.
+    let entity_id: Option<String> = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='items' AND local_id=?1",
+        [item_id], |row| row.get(0),
+    ).optional()?;
+    let entity_id = match entity_id {
+        Some(id) => id,
+        None => {
+            let id = format!("{installation_id}:{item_id}");
+            crate::database::entity_ids::register(tx, "items", &id, item_id)?;
+            id
+        }
+    };
     crate::sync::queue::enqueue_cloud_event(
-        tx, "items", &format!("{installation_id}:{item_id}"), "upsert",
+        tx, "items", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": item_id,
@@ -317,6 +333,28 @@ mod tests {
         ).unwrap();
         assert!(entity_id.ends_with(&format!(":{}", item.id)));
         assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["item"]["name"], "Coffee");
+    }
+
+    #[test]
+    fn item_edits_keep_the_registered_cloud_identity() {
+        let conn = db();
+        let item = create_item(&conn, NewItem {
+            category_id: None, name: "Tea".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(2.0), selling_price: 5.0,
+        }).unwrap();
+        // Simulate an item that originally came from a different installation.
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='remote-device:42'
+             WHERE entity_type='items' AND local_id=?1", [item.id],
+        ).unwrap();
+        set_item_active(&conn, item.id, false).unwrap();
+        update_item_pricing(&conn, item.id, 6.0, Some(2.0)).unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT entity_id FROM cloud_outbox WHERE entity_type='items' ORDER BY rowid DESC LIMIT 2"
+        ).unwrap();
+        let ids: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap()
+            .map(|r| r.unwrap()).collect();
+        assert_eq!(ids, vec!["remote-device:42", "remote-device:42"]);
     }
 
     #[test]
