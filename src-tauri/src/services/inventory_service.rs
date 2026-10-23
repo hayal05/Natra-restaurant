@@ -27,8 +27,10 @@ pub fn create_category(conn: &Connection, name: &str, description: Option<&str>)
         "SELECT * FROM categories WHERE id = ?1", [id], Category::from_row
     )?;
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let entity_id = format!("{installation_id}:{id}");
+    crate::database::entity_ids::register(&tx, "categories", &entity_id, id)?;
     crate::sync::queue::enqueue_cloud_event(
-        &tx, "categories", &format!("{installation_id}:{id}"), "upsert",
+        &tx, "categories", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": id,
@@ -223,6 +225,20 @@ mod tests {
     }
 
     #[test]
+    fn category_creation_registers_stable_cloud_identity() {
+        let conn = db();
+        let category = create_category(&conn, "Coffee", None).unwrap();
+        let entity_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_outbox WHERE entity_type='categories'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(
+            crate::database::entity_ids::lookup(&conn, "categories", &entity_id).unwrap(),
+            Some(category.id),
+        );
+    }
+
+    #[test]
     fn category_creation_rolls_back_if_outbox_fails() {
         let conn = db();
         conn.execute_batch(
@@ -235,6 +251,11 @@ mod tests {
             [], |r| r.get(0)
         ).unwrap();
         assert_eq!(count, 0);
+        let mapping_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cloud_entity_ids WHERE entity_type='categories'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mapping_count, 0);
     }
 
     #[test]
