@@ -26,13 +26,7 @@ pub fn create_category(conn: &Connection, name: &str, description: Option<&str>)
     let category = tx.query_row(
         "SELECT * FROM categories WHERE id = ?1", [id], Category::from_row
     )?;
-    let installation_id: String = tx.query_row(
-        "SELECT value FROM sync_meta WHERE key = 'device_id'", [],
-        |row| row.get(0),
-    )?;
-    if installation_id.trim().is_empty() {
-        return Err(AppError::Validation("installation ID is missing".into()));
-    }
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
     crate::sync::queue::enqueue_cloud_event(
         &tx, "categories", &format!("{installation_id}:{id}"), "upsert",
         &serde_json::json!({
