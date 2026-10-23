@@ -135,6 +135,27 @@ pub(crate) fn is_cloud_event_applied(conn: &Connection, event_id: &str) -> AppRe
     Ok(applied)
 }
 
+/// Record an event as applied in the caller's SQLite transaction.
+/// Call only after successfully applying its business changes, and commit
+/// this receipt together with the cloud cursor. Conflicting duplicates error.
+#[allow(dead_code)]
+pub(crate) fn record_cloud_applied_event(
+    tx: &rusqlite::Transaction<'_>,
+    event_id: &str,
+    sequence_id: i64,
+) -> AppResult<()> {
+    if event_id.trim().is_empty() || sequence_id <= 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "cloud event ID and positive sequence are required".into(),
+        ).into());
+    }
+    tx.execute(
+        "INSERT INTO cloud_applied_events(event_id, sequence_id) VALUES (?1, ?2)",
+        rusqlite::params![event_id, sequence_id],
+    )?;
+    Ok(())
+}
+
 /// Reuse the device_id key already reserved by migration 005.
 /// The ID belongs to the installation, never to the signed-in user.
 /// SQLite's randomblob() supplies random bytes without introducing a new crate.
@@ -269,6 +290,36 @@ mod tests {
         assert!(is_cloud_event_applied(&conn, "event-a").unwrap());
         assert!(!is_cloud_event_applied(&conn, "event-b").unwrap());
         assert!(is_cloud_event_applied(&conn, " ").is_err());
+    }
+
+    #[test]
+    fn cloud_event_receipt_commits_and_rejects_duplicates() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        let tx = conn.transaction().unwrap();
+        record_cloud_applied_event(&tx, "event-1", 1).unwrap();
+        assert!(record_cloud_applied_event(&tx, "event-1", 1).is_err());
+        assert!(record_cloud_applied_event(&tx, "event-2", 1).is_err());
+        assert!(record_cloud_applied_event(&tx, "", 2).is_err());
+        assert!(record_cloud_applied_event(&tx, "event-2", 0).is_err());
+        advance_cloud_pull_cursor(&tx, 1).unwrap();
+        tx.commit().unwrap();
+        assert!(is_cloud_event_applied(&conn, "event-1").unwrap());
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn cloud_event_receipt_rollback_preserves_retry() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        {
+            let tx = conn.transaction().unwrap();
+            record_cloud_applied_event(&tx, "event-retry", 5).unwrap();
+            advance_cloud_pull_cursor(&tx, 5).unwrap();
+            // Dropping the transaction simulates a failed batch.
+        }
+        assert!(!is_cloud_event_applied(&conn, "event-retry").unwrap());
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
     }
 
     #[test]
