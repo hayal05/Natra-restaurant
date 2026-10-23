@@ -16,12 +16,34 @@ pub fn create_category(conn: &Connection, name: &str, description: Option<&str>)
     if name.trim().is_empty() {
         return Err(AppError::Validation("category name is required".into()));
     }
-    conn.execute(
+    // Keep the category and its upload event in one atomic SQLite commit.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO categories (name, description) VALUES (?1, ?2)",
         rusqlite::params![name, description],
     )?;
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row("SELECT * FROM categories WHERE id = ?1", [id], Category::from_row)?)
+    let id = tx.last_insert_rowid();
+    let category = tx.query_row(
+        "SELECT * FROM categories WHERE id = ?1", [id], Category::from_row
+    )?;
+    let installation_id: String = tx.query_row(
+        "SELECT value FROM sync_meta WHERE key = 'device_id'", [],
+        |row| row.get(0),
+    )?;
+    if installation_id.trim().is_empty() {
+        return Err(AppError::Validation("installation ID is missing".into()));
+    }
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "categories", &format!("{installation_id}:{id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": id,
+            "name": name,
+            "description": description,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(category)
 }
 
 pub fn list_categories(conn: &Connection) -> AppResult<Vec<Category>> {
@@ -159,6 +181,33 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         migrations::run(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn category_creation_records_cloud_event() {
+        let conn = db();
+        let category = create_category(&conn, "Hot drinks", Some("Coffee and tea")).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='categories'",
+            [], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        assert!(entity_id.ends_with(&format!(":{}", category.id)));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["name"], "Hot drinks");
+    }
+
+    #[test]
+    fn category_creation_rolls_back_if_outbox_fails() {
+        let conn = db();
+        conn.execute_batch(
+            "CREATE TRIGGER block_category_event BEFORE INSERT ON cloud_outbox
+             BEGIN SELECT RAISE(FAIL, 'simulated outbox failure'); END;"
+        ).unwrap();
+        assert!(create_category(&conn, "Should not persist", None).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM categories WHERE name='Should not persist'",
+            [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
