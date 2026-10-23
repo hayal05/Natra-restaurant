@@ -219,7 +219,7 @@ where
 /// Reuse the device_id key already reserved by migration 005.
 /// The ID belongs to the installation, never to the signed-in user.
 /// SQLite's randomblob() supplies random bytes without introducing a new crate.
-fn ensure_installation_id(conn: &Connection) -> AppResult<String> {
+pub(crate) fn ensure_installation_id(conn: &Connection) -> AppResult<String> {
     let existing: Option<String> = conn.query_row(
         "SELECT value FROM sync_meta WHERE key = 'device_id'",
         [],
