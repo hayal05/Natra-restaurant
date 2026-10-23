@@ -1,5 +1,5 @@
 //! Waiter management and receivables.
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 use crate::models::{Sale, SaleItem, Waiter};
@@ -8,8 +8,20 @@ use crate::models::{Sale, SaleItem, Waiter};
 fn enqueue_waiter_snapshot(tx: &rusqlite::Transaction<'_>, waiter_id: i64) -> AppResult<Waiter> {
     let waiter = tx.query_row("SELECT * FROM waiters WHERE id=?1", [waiter_id], Waiter::from_row)?;
     let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    let mapped: Option<String> = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+        [waiter_id], |row| row.get(0),
+    ).optional()?;
+    let entity_id = match mapped {
+        Some(id) => id,
+        None => {
+            let id = format!("{installation_id}:{waiter_id}");
+            crate::database::entity_ids::register(tx, "waiters", &id, waiter_id)?;
+            id
+        }
+    };
     crate::sync::queue::enqueue_cloud_event(
-        tx, "waiters", &format!("{installation_id}:{waiter_id}"), "upsert",
+        tx, "waiters", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": waiter_id,
@@ -200,6 +212,27 @@ mod sync_outbox_tests {
         let last: String = conn.query_row("SELECT payload FROM cloud_outbox WHERE entity_type='waiters' ORDER BY rowid DESC LIMIT 1", [], |r| r.get(0)).unwrap();
         let json: serde_json::Value = serde_json::from_str(&last).unwrap();
         assert_eq!(json["waiter"]["is_active"], false);
+    }
+
+    #[test]
+    fn waiter_identity_persists_across_activation() {
+        let conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        let original: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+            [waiter.id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='remote-device:55'
+             WHERE entity_type='waiters' AND local_id=?1", [waiter.id],
+        ).unwrap();
+        set_waiter_active(&conn, waiter.id, false).unwrap();
+        let latest: String = conn.query_row(
+            "SELECT entity_id FROM cloud_outbox WHERE entity_type='waiters' ORDER BY rowid DESC LIMIT 1",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(latest, "remote-device:55");
+        assert_ne!(latest, original);
     }
 
     #[test]
