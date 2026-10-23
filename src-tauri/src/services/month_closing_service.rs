@@ -379,7 +379,7 @@ mod tests {
         save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
         close_month(&mut conn, "2025-10-01").unwrap();
         let (identity, payload): (String, String) = conn.query_row(
-            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='material_month_closings'",
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='material_month_closings' ORDER BY rowid DESC LIMIT 1",
             [], |r| Ok((r.get(0)?,r.get(1)?)),
         ).unwrap();
         assert_eq!(identity, "2025-10-01");
