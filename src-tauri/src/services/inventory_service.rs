@@ -84,7 +84,8 @@ impl NewItem {
 pub fn create_item(conn: &Connection, new_item: NewItem) -> AppResult<Item> {
     new_item.validate()?;
 
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO items (category_id, name, type, purchase_cost, selling_price)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![
@@ -95,8 +96,19 @@ pub fn create_item(conn: &Connection, new_item: NewItem) -> AppResult<Item> {
             new_item.selling_price,
         ],
     )?;
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row("SELECT * FROM items WHERE id = ?1", [id], Item::from_row)?)
+    let id = tx.last_insert_rowid();
+    let item = tx.query_row("SELECT * FROM items WHERE id = ?1", [id], Item::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "items", &format!("{installation_id}:{id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": id,
+            "item": item,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(item)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -248,6 +260,38 @@ mod tests {
         let cookable_only = list_items(&conn, ItemFilter { item_type: Some(ItemType::Cookable), ..Default::default() }).unwrap();
         assert_eq!(cookable_only.len(), 1);
         assert_eq!(cookable_only[0].name, "Grilled Chicken");
+    }
+
+    #[test]
+    fn item_creation_records_cloud_event() {
+        let conn = db();
+        let item = create_item(&conn, NewItem {
+            category_id: None, name: "Coffee".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(10.0), selling_price: 20.0,
+        }).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id, payload FROM cloud_outbox WHERE entity_type='items'",
+            [], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        assert!(entity_id.ends_with(&format!(":{}", item.id)));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["item"]["name"], "Coffee");
+    }
+
+    #[test]
+    fn item_creation_rolls_back_if_outbox_fails() {
+        let conn = db();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_item_event BEFORE INSERT ON cloud_outbox
+             BEGIN SELECT RAISE(FAIL, 'outbox unavailable'); END;"
+        ).unwrap();
+        assert!(create_item(&conn, NewItem {
+            category_id: None, name: "Unsaved".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 2.0,
+        }).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE name='Unsaved'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
