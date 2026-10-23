@@ -4,11 +4,29 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 use crate::models::{Sale, SaleItem, Waiter};
 
+// Share a complete waiter snapshot across create and activation updates.
+fn enqueue_waiter_snapshot(tx: &rusqlite::Transaction<'_>, waiter_id: i64) -> AppResult<Waiter> {
+    let waiter = tx.query_row("SELECT * FROM waiters WHERE id=?1", [waiter_id], Waiter::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    crate::sync::queue::enqueue_cloud_event(
+        tx, "waiters", &format!("{installation_id}:{waiter_id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": waiter_id,
+            "waiter": waiter,
+        }),
+    )?;
+    Ok(waiter)
+}
+
 pub fn create_waiter(conn: &Connection, full_name: &str, phone: Option<&str>, profile_photo: Option<&str>) -> AppResult<Waiter> {
     if full_name.trim().is_empty() { return Err(AppError::Validation("waiter name is required".into())); }
-    conn.execute("INSERT INTO waiters (full_name, phone, profile_photo) VALUES (?1, ?2, ?3)", rusqlite::params![full_name, phone, profile_photo])?;
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row("SELECT * FROM waiters WHERE id = ?1", [id], Waiter::from_row)?)
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("INSERT INTO waiters (full_name, phone, profile_photo) VALUES (?1, ?2, ?3)", rusqlite::params![full_name, phone, profile_photo])?;
+    let id = tx.last_insert_rowid();
+    let waiter = enqueue_waiter_snapshot(&tx, id)?;
+    tx.commit()?;
+    Ok(waiter)
 }
 
 pub fn list_waiters(conn: &Connection, only_active: bool) -> AppResult<Vec<Waiter>> {
@@ -19,8 +37,11 @@ pub fn list_waiters(conn: &Connection, only_active: bool) -> AppResult<Vec<Waite
 }
 
 pub fn set_waiter_active(conn: &Connection, waiter_id: i64, is_active: bool) -> AppResult<()> {
-    let affected = conn.execute("UPDATE waiters SET is_active = ?1, updated_at = datetime('now') WHERE id = ?2", rusqlite::params![is_active, waiter_id])?;
+    let tx = conn.unchecked_transaction()?;
+    let affected = tx.execute("UPDATE waiters SET is_active = ?1, updated_at = datetime('now') WHERE id = ?2", rusqlite::params![is_active, waiter_id])?;
     if affected == 0 { return Err(AppError::NotFound(format!("waiter {waiter_id}"))); }
+    enqueue_waiter_snapshot(&tx, waiter_id)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -68,4 +89,37 @@ pub fn list_receivables(conn: &Connection) -> AppResult<Vec<WaiterReceivable>> {
 pub fn settle_waiter(conn: &Connection, waiter_id: i64) -> AppResult<usize> {
     let affected = conn.execute("UPDATE sales SET is_settled = 1, settled_at = datetime('now') WHERE waiter_id = ?1 AND is_settled = 0", [waiter_id])?;
     Ok(affected)
+}
+
+#[cfg(test)]
+mod sync_outbox_tests {
+    use super::*;
+    use crate::database::migrations;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        migrations::run(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn waiter_creation_and_activation_enqueue_snapshots() {
+        let conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        set_waiter_active(&conn, waiter.id, false).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cloud_outbox WHERE entity_type='waiters'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+        let last: String = conn.query_row("SELECT payload FROM cloud_outbox WHERE entity_type='waiters' ORDER BY rowid DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&last).unwrap();
+        assert_eq!(json["waiter"]["is_active"], false);
+    }
+
+    #[test]
+    fn waiter_changes_rollback_on_outbox_failure() {
+        let conn = db();
+        conn.execute_batch("CREATE TRIGGER fail_waiter_event BEFORE INSERT ON cloud_outbox BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;").unwrap();
+        assert!(create_waiter(&conn, "Unwritten", None, None).is_err());
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM waiters WHERE full_name='Unwritten'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
 }
