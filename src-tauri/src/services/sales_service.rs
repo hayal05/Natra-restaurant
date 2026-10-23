@@ -237,12 +237,27 @@ pub fn reverse_sale(conn: &Connection, sale_id: i64) -> AppResult<Sale> {
         )));
     }
 
-    conn.execute(
-        "UPDATE sales SET is_reversed = 1, reversed_at = datetime('now') WHERE id = ?1",
+    let tx = conn.unchecked_transaction()?;
+    let changed = tx.execute(
+        "UPDATE sales SET is_reversed = 1, reversed_at = datetime('now')
+         WHERE id = ?1 AND is_reversed = 0",
         [sale_id],
     )?;
-
-    Ok(conn.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?)
+    if changed != 1 {
+        return Err(AppError::Validation("this sale has already been reversed".into()));
+    }
+    let reversed = tx.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "sale_reversals", &format!("{installation_id}:{sale_id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "sale_entity_id": format!("{installation_id}:{sale_id}"),
+            "sale": reversed,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(reversed)
 }
 
 #[cfg(test)]
@@ -414,6 +429,52 @@ mod tests {
         assert!(reversed.is_reversed);
         assert!(reversed.reversed_at.is_some());
         assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn reversal_records_one_cloud_event_without_duplicate_sale() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        reverse_sale(&conn, sale.id).unwrap();
+        assert!(reverse_sale(&conn, sale.id).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cloud_outbox WHERE entity_type='sale_reversals'",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0)).unwrap();
+        assert_eq!(sales, 1);
+    }
+
+    #[test]
+    fn reversal_rolls_back_if_cloud_outbox_fails() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        conn.execute_batch(
+            "CREATE TRIGGER reject_reversal_outbox BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='sale_reversals'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(reverse_sale(&conn, sale.id).is_err());
+        let still_open: i64 = conn.query_row(
+            "SELECT is_reversed FROM sales WHERE id=?1", [sale.id], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(still_open, 0);
     }
 
     #[test]
