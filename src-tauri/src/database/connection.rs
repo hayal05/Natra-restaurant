@@ -86,6 +86,37 @@ pub(crate) fn read_cloud_pull_cursor(conn: &Connection) -> AppResult<i64> {
     Ok(cursor)
 }
 
+/// Advance the cloud pull cursor inside the caller's SQLite transaction.
+/// Call only after successfully applying every event through this sequence.
+/// If the transaction rolls back, the cursor update rolls back with it.
+#[allow(dead_code)]
+pub(crate) fn advance_cloud_pull_cursor(
+    tx: &rusqlite::Transaction<'_>,
+    new_cursor: i64,
+) -> AppResult<()> {
+    if new_cursor < 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "negative cloud pull cursor".into(),
+        ).into());
+    }
+    let current = read_cloud_pull_cursor(tx)?;
+    if new_cursor < current {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "cloud pull cursor cannot move backwards".into(),
+        ).into());
+    }
+    let updated = tx.execute(
+        "UPDATE sync_meta SET value = ?1 WHERE key = 'cloud_last_applied_sequence'",
+        [new_cursor.to_string()],
+    )?;
+    if updated != 1 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "cloud pull cursor metadata missing".into(),
+        ).into());
+    }
+    Ok(())
+}
+
 /// Reuse the device_id key already reserved by migration 005.
 /// The ID belongs to the installation, never to the signed-in user.
 /// SQLite's randomblob() supplies random bytes without introducing a new crate.
@@ -179,6 +210,33 @@ mod tests {
             ).unwrap();
             assert!(read_cloud_pull_cursor(&conn).is_err());
         }
+    }
+
+    #[test]
+    fn cloud_cursor_update_commits_with_transaction() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        let tx = conn.transaction().unwrap();
+        advance_cloud_pull_cursor(&tx, 42).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 42);
+    }
+
+    #[test]
+    fn cloud_cursor_update_rolls_back_and_cannot_regress() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        {
+            let tx = conn.transaction().unwrap();
+            advance_cloud_pull_cursor(&tx, 10).unwrap();
+        }
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
+        let tx = conn.transaction().unwrap();
+        advance_cloud_pull_cursor(&tx, 10).unwrap();
+        assert!(advance_cloud_pull_cursor(&tx, 9).is_err());
+        assert!(advance_cloud_pull_cursor(&tx, -1).is_err());
+        tx.commit().unwrap();
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 10);
     }
 
     #[test]
