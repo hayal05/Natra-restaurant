@@ -168,6 +168,21 @@ pub(crate) fn apply_cloud_event_batch<F>(
 where
     F: FnMut(&rusqlite::Transaction<'_>, &str, i64) -> AppResult<()>,
 {
+    // Validate the complete batch before invoking any business mutation.
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut previous_sequence = 0_i64;
+    for &(event_id, sequence_id) in events {
+        if event_id.trim().is_empty()
+            || sequence_id <= previous_sequence
+            || !seen_ids.insert(event_id)
+        {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "cloud batch contains duplicate IDs or unordered/invalid sequences".into(),
+            ).into());
+        }
+        previous_sequence = sequence_id;
+    }
+
     let tx = conn.transaction()?;
     let mut cursor = read_cloud_pull_cursor(&tx)?;
     for &(event_id, sequence_id) in events {
@@ -399,6 +414,28 @@ mod tests {
         assert!(!is_cloud_event_applied(&conn, "one").unwrap());
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM test_cloud_values", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn invalid_cloud_batch_is_rejected_before_applying_any_events() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        for events in [
+            vec![("same", 1), ("same", 2)],
+            vec![("later", 2), ("earlier", 1)],
+            vec![("one", 1), ("two", 1)],
+            vec![("", 1)],
+            vec![("zero", 0)],
+        ] {
+            let mut applied = 0;
+            let result = apply_cloud_event_batch(&mut conn, &events, |_, _, _| {
+                applied += 1;
+                Ok(())
+            });
+            assert!(result.is_err());
+            assert_eq!(applied, 0);
+            assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
+        }
     }
 
     #[test]
