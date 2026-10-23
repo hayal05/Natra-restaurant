@@ -87,8 +87,96 @@ pub fn list_receivables(conn: &Connection) -> AppResult<Vec<WaiterReceivable>> {
 }
 
 pub fn settle_waiter(conn: &Connection, waiter_id: i64) -> AppResult<usize> {
-    let affected = conn.execute("UPDATE sales SET is_settled = 1, settled_at = datetime('now') WHERE waiter_id = ?1 AND is_settled = 0", [waiter_id])?;
+    let tx = conn.unchecked_transaction()?;
+    // Capture the exact affected sales before updating; retries cannot
+    // create a second settlement for already-settled sales.
+    let sale_ids: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT id FROM sales WHERE waiter_id = ?1 AND is_settled = 0 ORDER BY id"
+        )?;
+        stmt.query_map([waiter_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if sale_ids.is_empty() {
+        tx.commit()?;
+        return Ok(0);
+    }
+    let affected = tx.execute(
+        "UPDATE sales SET is_settled = 1, settled_at = datetime('now')
+         WHERE waiter_id = ?1 AND is_settled = 0", [waiter_id]
+    )?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let mut settled_sales = Vec::with_capacity(sale_ids.len());
+    for id in sale_ids {
+        settled_sales.push(tx.query_row(
+            "SELECT * FROM sales WHERE id = ?1", [id], Sale::from_row
+        )?);
+    }
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "waiter_settlements", &format!("{installation_id}:{waiter_id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "waiter_entity_id": format!("{installation_id}:{waiter_id}"),
+            "settled_sales": settled_sales,
+        }),
+    )?;
+    tx.commit()?;
     Ok(affected)
+}
+
+#[cfg(test)]
+mod settlement_outbox_tests {
+    use super::*;
+    use crate::database::migrations;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        migrations::run(&conn).unwrap();
+        conn
+    }
+
+    fn pending_sale(conn: &Connection, waiter_id: i64) {
+        conn.execute(
+            "INSERT INTO sales (waiter_id, total_quantity, total_amount, total_cost, total_profit, payment_method)
+             VALUES (?1, 1, 20, 0, 20, 'cash')", [waiter_id]
+        ).unwrap();
+    }
+
+    #[test]
+    fn settlement_queues_exact_sales_once() {
+        let conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        pending_sale(&conn, waiter.id);
+        pending_sale(&conn, waiter.id);
+        assert_eq!(settle_waiter(&conn, waiter.id).unwrap(), 2);
+        assert_eq!(settle_waiter(&conn, waiter.id).unwrap(), 0);
+        let (count, payload): (i64, String) = conn.query_row(
+            "SELECT COUNT(*), MAX(payload) FROM cloud_outbox WHERE entity_type='waiter_settlements'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(count, 1);
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["settled_sales"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn settlement_rolls_back_on_outbox_failure() {
+        let conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        pending_sale(&conn, waiter.id);
+        conn.execute_batch(
+            "CREATE TRIGGER stop_settlement BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='waiter_settlements'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(settle_waiter(&conn, waiter.id).is_err());
+        let unsettled: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sales WHERE waiter_id=?1 AND is_settled=0",
+            [waiter.id], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(unsettled, 1);
+    }
 }
 
 #[cfg(test)]
