@@ -117,6 +117,24 @@ pub(crate) fn advance_cloud_pull_cursor(
     Ok(())
 }
 
+/// Check whether an incoming cloud event already has an applied receipt.
+/// The caller can pass a SQLite transaction to keep this check alongside
+/// event application. An empty event ID is not a valid event.
+#[allow(dead_code)]
+pub(crate) fn is_cloud_event_applied(conn: &Connection, event_id: &str) -> AppResult<bool> {
+    if event_id.trim().is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "cloud event ID must not be empty".into(),
+        ).into());
+    }
+    let applied: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM cloud_applied_events WHERE event_id = ?1)",
+        [event_id],
+        |row| row.get(0),
+    )?;
+    Ok(applied)
+}
+
 /// Reuse the device_id key already reserved by migration 005.
 /// The ID belongs to the installation, never to the signed-in user.
 /// SQLite's randomblob() supplies random bytes without introducing a new crate.
@@ -237,6 +255,20 @@ mod tests {
         assert!(advance_cloud_pull_cursor(&tx, -1).is_err());
         tx.commit().unwrap();
         assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 10);
+    }
+
+    #[test]
+    fn applied_cloud_event_check_recognizes_receipts() {
+        let db = Db::init_in_memory().unwrap();
+        let conn = db.lock();
+        assert!(!is_cloud_event_applied(&conn, "event-a").unwrap());
+        conn.execute(
+            "INSERT INTO cloud_applied_events(event_id, sequence_id) VALUES (?1, ?2)",
+            rusqlite::params!["event-a", 1],
+        ).unwrap();
+        assert!(is_cloud_event_applied(&conn, "event-a").unwrap());
+        assert!(!is_cloud_event_applied(&conn, "event-b").unwrap());
+        assert!(is_cloud_event_applied(&conn, " ").is_err());
     }
 
     #[test]
