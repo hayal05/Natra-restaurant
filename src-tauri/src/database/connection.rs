@@ -65,6 +65,27 @@ impl Db {
     }
 }
 
+/// Read the last cloud event sequence durably applied to this installation.
+/// A missing, negative or malformed cursor is an error, never an implicit reset:
+/// resetting to zero silently could replay old financial events.
+#[allow(dead_code)]
+pub(crate) fn read_cloud_pull_cursor(conn: &Connection) -> AppResult<i64> {
+    let value: String = conn.query_row(
+        "SELECT value FROM sync_meta WHERE key = 'cloud_last_applied_sequence'",
+        [],
+        |row| row.get(0),
+    )?;
+    let cursor = value.parse::<i64>().map_err(|_| {
+        rusqlite::Error::InvalidParameterName("invalid cloud pull cursor".into())
+    })?;
+    if cursor < 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "negative cloud pull cursor".into(),
+        ).into());
+    }
+    Ok(cursor)
+}
+
 /// Reuse the device_id key already reserved by migration 005.
 /// The ID belongs to the installation, never to the signed-in user.
 /// SQLite's randomblob() supplies random bytes without introducing a new crate.
@@ -133,6 +154,31 @@ mod tests {
             "SELECT value FROM sync_meta WHERE key='device_id'", [], |row| row.get(0)
         ).unwrap();
         assert_eq!(saved, first);
+    }
+
+    #[test]
+    fn cloud_cursor_starts_at_zero_and_reads_saved_value() {
+        let db = Db::init_in_memory().unwrap();
+        let conn = db.lock();
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
+        conn.execute(
+            "UPDATE sync_meta SET value='123' WHERE key='cloud_last_applied_sequence'",
+            [],
+        ).unwrap();
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 123);
+    }
+
+    #[test]
+    fn malformed_cloud_cursor_is_rejected() {
+        let db = Db::init_in_memory().unwrap();
+        let conn = db.lock();
+        for bad in ["invalid", "-1", ""] {
+            conn.execute(
+                "UPDATE sync_meta SET value=?1 WHERE key='cloud_last_applied_sequence'",
+                [bad],
+            ).unwrap();
+            assert!(read_cloud_pull_cursor(&conn).is_err());
+        }
     }
 
     #[test]
