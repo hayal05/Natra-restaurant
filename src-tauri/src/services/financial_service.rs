@@ -12,12 +12,24 @@ use crate::services::raw_material_service;
 pub fn create_expense(conn: &Connection, category: &str, description: Option<&str>, amount: f64, expense_date: Option<&str>, note: Option<&str>) -> AppResult<Expense> {
     if category.trim().is_empty() { return Err(AppError::Validation("expense category is required".into())); }
     if amount <= 0.0 { return Err(AppError::Validation("expense amount must be greater than zero".into())); }
+    let tx = conn.unchecked_transaction()?;
     match expense_date {
-        Some(date) => { conn.execute("INSERT INTO expenses (category, description, amount, expense_date, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![category, description, amount, date, note])?; }
-        None => { conn.execute("INSERT INTO expenses (category, description, amount, note) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![category, description, amount, note])?; }
+        Some(date) => { tx.execute("INSERT INTO expenses (category, description, amount, expense_date, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![category, description, amount, date, note])?; }
+        None => { tx.execute("INSERT INTO expenses (category, description, amount, note) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![category, description, amount, note])?; }
     }
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row("SELECT * FROM expenses WHERE id = ?1", [id], Expense::from_row)?)
+    let id = tx.last_insert_rowid();
+    let expense = tx.query_row("SELECT * FROM expenses WHERE id = ?1", [id], Expense::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "expenses", &format!("{installation_id}:{id}"), "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": id,
+            "expense": expense,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(expense)
 }
 
 pub fn list_expenses(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<Expense>> {
@@ -94,6 +106,33 @@ mod tests {
         assert_eq!(summary.raw_material_costs, 6.0);
         assert_eq!(summary.other_expenses, 4.5);
         assert_eq!(summary.profit, 10.0);
+    }
+
+    #[test]
+    fn expense_creation_queues_matching_cloud_event() {
+        let conn = db();
+        let expense = create_expense(&conn, "Utilities", Some("Electricity"), 42.0, None, None).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='expenses'",
+            [], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        assert!(entity_id.ends_with(&format!(":{}", expense.id)));
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["expense"]["amount"], 42.0);
+    }
+
+    #[test]
+    fn expense_creation_rolls_back_when_outbox_fails() {
+        let conn = db();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_expense_event BEFORE INSERT ON cloud_outbox
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(create_expense(&conn, "Utilities", None, 42.0, None, None).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM expenses WHERE category='Utilities'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
