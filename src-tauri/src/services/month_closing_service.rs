@@ -256,7 +256,14 @@ pub fn close_month(conn: &mut Connection, month: &str) -> AppResult<ClosingState
             computed.push(valued);
         }
         tx.execute("UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now'),updated_at=datetime('now') WHERE id=?1", [id])?;
-        Ok(ClosingState { month: month.into(), status: "closed".into(), lines: computed })
+        let result = ClosingState { month: month.into(), status: "closed".into(), lines: computed };
+        // A closing is unique to its workspace and calendar month. Capture
+        // the final valued lines in the same transaction as finalization.
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "material_month_closings", month, "upsert",
+            &serde_json::json!({ "closing": result }),
+        )?;
+        Ok(result)
     })
 }
 
@@ -350,6 +357,40 @@ mod tests {
         assert_eq!(close_month(&mut c,"2025-10-01").unwrap().lines[0].consumed_value,4800.0);
         let count:i64=c.query_row("SELECT COUNT(*) FROM raw_material_closing_audit",[],|r|r.get(0)).unwrap();
         assert_eq!(count,1);
+    }
+
+    #[test]
+    fn closing_finalization_queues_complete_month_snapshot() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        let (identity, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='material_month_closings'",
+            [], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(identity, "2025-10-01");
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["closing"]["status"], "closed");
+        assert_eq!(event["closing"]["lines"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn closing_finalization_rolls_back_if_outbox_fails() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_closing_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='material_month_closings'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(close_month(&mut conn, "2025-10-01").is_err());
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-10-01'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(status, "draft");
     }
 
     #[test]
