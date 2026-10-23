@@ -5,7 +5,7 @@
 //! shared as Tauri managed state across command handlers.
 
 use crate::errors::AppResult;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -153,6 +153,51 @@ pub(crate) fn record_cloud_applied_event(
         "INSERT INTO cloud_applied_events(event_id, sequence_id) VALUES (?1, ?2)",
         rusqlite::params![event_id, sequence_id],
     )?;
+    Ok(())
+}
+
+/// Apply a strictly ordered downloaded batch atomically with receipts and cursor.
+/// The callback MUST perform actual business-row changes; no callback means no
+/// event application. Empty batches leave the cursor unchanged.
+#[allow(dead_code)]
+pub(crate) fn apply_cloud_event_batch<F>(
+    conn: &mut Connection,
+    events: &[(&str, i64)],
+    mut apply_business_event: F,
+) -> AppResult<()>
+where
+    F: FnMut(&rusqlite::Transaction<'_>, &str, i64) -> AppResult<()>,
+{
+    let tx = conn.transaction()?;
+    let mut cursor = read_cloud_pull_cursor(&tx)?;
+    for &(event_id, sequence_id) in events {
+        if event_id.trim().is_empty() || sequence_id <= cursor {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "cloud event sequences must increase and IDs must be nonempty".into(),
+            ).into());
+        }
+        // A previously applied event must match its original sequence.
+        let existing: Option<i64> = tx.query_row(
+            "SELECT sequence_id FROM cloud_applied_events WHERE event_id=?1",
+            [event_id],
+            |row| row.get(0),
+        ).optional()?;
+        match existing {
+            Some(previous) if previous == sequence_id => {}
+            Some(_) => return Err(rusqlite::Error::InvalidParameterName(
+                "event ID reused with a different cloud sequence".into(),
+            ).into()),
+            None => {
+                apply_business_event(&tx, event_id, sequence_id)?;
+                record_cloud_applied_event(&tx, event_id, sequence_id)?;
+            }
+        }
+        cursor = sequence_id;
+    }
+    if !events.is_empty() {
+        advance_cloud_pull_cursor(&tx, cursor)?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -320,6 +365,40 @@ mod tests {
         }
         assert!(!is_cloud_event_applied(&conn, "event-retry").unwrap());
         assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn cloud_batch_commits_events_receipts_and_cursor() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        conn.execute_batch("CREATE TABLE test_cloud_values(value TEXT NOT NULL);").unwrap();
+        apply_cloud_event_batch(&mut conn, &[("one", 1), ("two", 2)], |tx, id, _| {
+            tx.execute("INSERT INTO test_cloud_values(value) VALUES (?1)", [id])?;
+            Ok(())
+        }).unwrap();
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 2);
+        assert!(is_cloud_event_applied(&conn, "one").unwrap());
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM test_cloud_values", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn cloud_batch_failure_rolls_back_business_receipts_and_cursor() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        conn.execute_batch("CREATE TABLE test_cloud_values(value TEXT NOT NULL);").unwrap();
+        let result = apply_cloud_event_batch(&mut conn, &[("one", 1), ("two", 2)], |tx, id, _| {
+            if id == "two" {
+                return Err(rusqlite::Error::InvalidParameterName("test failure".into()).into());
+            }
+            tx.execute("INSERT INTO test_cloud_values(value) VALUES (?1)", [id])?;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 0);
+        assert!(!is_cloud_event_applied(&conn, "one").unwrap());
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM test_cloud_values", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
