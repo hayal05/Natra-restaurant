@@ -151,6 +151,19 @@ pub fn checkout(conn: &mut Connection, req: CheckoutRequest) -> AppResult<Checko
         }
 
         let sale = tx.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?;
+        // One immutable financial event covers both the sale header and all
+        // line items. It commits or rolls back with checkout.
+        let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "sales", &format!("{installation_id}:{sale_id}"), "upsert",
+            &serde_json::json!({
+                "origin_installation_id": installation_id,
+                "local_id": sale_id,
+                "waiter_entity_id": format!("{installation_id}:{}", req.waiter_id),
+                "sale": sale,
+                "items": items,
+            }),
+        )?;
 
         Ok(CheckoutResult { sale, items })
     })
@@ -278,6 +291,55 @@ mod tests {
 
         // Waiter receivable should reflect the new unsettled sale.
         assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 22.0);
+    }
+
+    #[test]
+    fn checkout_queues_one_event_with_sale_and_all_lines() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 2 }], note: None,
+        }).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id, payload FROM cloud_outbox WHERE entity_type='sales'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!(entity_id.ends_with(&format!(":{}", result.sale.id)));
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["sale"]["total_amount"], 6.0);
+        assert_eq!(event["items"].as_array().unwrap().len(), 1);
+        assert_eq!(event["items"][0]["quantity"], 2);
+    }
+
+    #[test]
+    fn outbox_failure_rolls_back_sale_and_lines() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_sale_cloud_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='sales'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 2 }], note: None,
+        });
+        assert!(result.is_err());
+        for table in ["sales", "sale_items"] {
+            let count: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "{table} should roll back");
+        }
     }
 
     #[test]
