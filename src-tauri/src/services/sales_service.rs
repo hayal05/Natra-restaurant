@@ -270,11 +270,17 @@ pub fn reverse_sale(conn: &Connection, sale_id: i64) -> AppResult<Sale> {
     }
     let reversed = tx.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?;
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let mapped: Option<String> = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1",
+        [sale_id], |r| r.get(0),
+    ).optional()?;
+    let sale_entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{sale_id}"));
+    crate::database::entity_ids::register(&tx, "sales", &sale_entity_id, sale_id)?;
     crate::sync::queue::enqueue_cloud_event(
-        &tx, "sale_reversals", &format!("{installation_id}:{sale_id}"), "upsert",
+        &tx, "sale_reversals", &sale_entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
-            "sale_entity_id": format!("{installation_id}:{sale_id}"),
+            "sale_entity_id": sale_entity_id,
             "sale": reversed,
         }),
     )?;
@@ -497,6 +503,29 @@ mod tests {
         assert_eq!(count, 1);
         let sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0)).unwrap();
         assert_eq!(sales, 1);
+    }
+
+    #[test]
+    fn reversal_reuses_original_sale_cloud_id() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Coffee".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote-device:sale'
+                      WHERE entity_type='sales' AND local_id=?1", [sale.id]).unwrap();
+        reverse_sale(&conn, sale.id).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='sale_reversals'",
+            [], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(entity_id, "remote-device:sale");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["sale_entity_id"], "remote-device:sale");
     }
 
     #[test]
