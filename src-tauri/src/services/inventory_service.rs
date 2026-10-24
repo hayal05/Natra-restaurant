@@ -103,11 +103,21 @@ pub fn create_item(conn: &Connection, new_item: NewItem) -> AppResult<Item> {
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
     let entity_id = format!("{installation_id}:{id}");
     crate::database::entity_ids::register(&tx, "items", &entity_id, id)?;
+    let category_entity_id = if let Some(category_id) = item.category_id {
+        let existing: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='categories' AND local_id=?1",
+            [category_id], |r| r.get(0),
+        ).optional()?;
+        let category_cloud_id = existing.unwrap_or_else(|| format!("{installation_id}:{category_id}"));
+        crate::database::entity_ids::register(&tx, "categories", &category_cloud_id, category_id)?;
+        Some(category_cloud_id)
+    } else { None };
     crate::sync::queue::enqueue_cloud_event(
         &tx, "items", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": id,
+            "category_entity_id": category_entity_id,
             "item": item,
         }),
     )?;
@@ -333,6 +343,25 @@ mod tests {
         ).unwrap();
         assert!(entity_id.ends_with(&format!(":{}", item.id)));
         assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["item"]["name"], "Coffee");
+    }
+
+    #[test]
+    fn item_creation_preserves_remote_category_identity() {
+        let conn = db();
+        let category = create_category(&conn, "Drinks", None).unwrap();
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='remote:category'
+             WHERE entity_type='categories' AND local_id=?1", [category.id],
+        ).unwrap();
+        create_item(&conn, NewItem {
+            category_id: Some(category.id), name: "Tea".into(),
+            item_type: ItemType::ReadyMade, purchase_cost: Some(2.0), selling_price: 5.0,
+        }).unwrap();
+        let payload: String = conn.query_row(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='items'", [], |r| r.get(0),
+        ).unwrap();
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["category_entity_id"], "remote:category");
     }
 
     #[test]
