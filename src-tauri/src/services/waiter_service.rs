@@ -118,17 +118,32 @@ pub fn settle_waiter(conn: &Connection, waiter_id: i64) -> AppResult<usize> {
          WHERE waiter_id = ?1 AND is_settled = 0", [waiter_id]
     )?;
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let waiter_cloud_id: Option<String> = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+        [waiter_id], |r| r.get(0),
+    ).optional()?;
+    let waiter_cloud_id = waiter_cloud_id.unwrap_or_else(|| format!("{installation_id}:{waiter_id}"));
+    crate::database::entity_ids::register(&tx, "waiters", &waiter_cloud_id, waiter_id)?;
     let mut settled_sales = Vec::with_capacity(sale_ids.len());
+    let mut sale_entity_ids = Vec::with_capacity(sale_ids.len());
     for id in sale_ids {
+        let sale_cloud_id: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1",
+            [id], |r| r.get(0),
+        ).optional()?;
+        let sale_cloud_id = sale_cloud_id.unwrap_or_else(|| format!("{installation_id}:{id}"));
+        crate::database::entity_ids::register(&tx, "sales", &sale_cloud_id, id)?;
+        sale_entity_ids.push(sale_cloud_id);
         settled_sales.push(tx.query_row(
             "SELECT * FROM sales WHERE id = ?1", [id], Sale::from_row
         )?);
     }
     crate::sync::queue::enqueue_cloud_event(
-        &tx, "waiter_settlements", &format!("{installation_id}:{waiter_id}"), "upsert",
+        &tx, "waiter_settlements", &waiter_cloud_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
-            "waiter_entity_id": format!("{installation_id}:{waiter_id}"),
+            "waiter_entity_id": waiter_cloud_id,
+            "sale_entity_ids": sale_entity_ids,
             "settled_sales": settled_sales,
         }),
     )?;
@@ -170,6 +185,26 @@ mod settlement_outbox_tests {
         assert_eq!(count, 1);
         let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(event["settled_sales"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn settlement_preserves_original_cloud_id_references() {
+        let conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        pending_sale(&conn, waiter.id);
+        let sale_id = conn.last_insert_rowid();
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote:waiter'
+                      WHERE entity_type='waiters' AND local_id=?1", [waiter.id]).unwrap();
+        crate::database::entity_ids::register(&conn, "sales", "remote:sale", sale_id).unwrap();
+        assert_eq!(settle_waiter(&conn, waiter.id).unwrap(), 1);
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='waiter_settlements'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(entity_id, "remote:waiter");
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["waiter_entity_id"], "remote:waiter");
+        assert_eq!(event["sale_entity_ids"][0], "remote:sale");
     }
 
     #[test]
