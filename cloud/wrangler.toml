@@ -1,0 +1,5 @@
+# Deploy from repository root using: npx wrangler deploy --config cloud/wrangler.toml
+name = "natra-restaurant-sync"
+main = "worker.js"
+compatibility_date = "2026-10-22"
+workers_dev = true

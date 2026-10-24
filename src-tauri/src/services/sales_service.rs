@@ -8,7 +8,7 @@
 //! whole sale is rejected and nothing is saved.
 
 use chrono::{NaiveDateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::database::schema::payment_method as pm;
@@ -151,6 +151,41 @@ pub fn checkout(conn: &mut Connection, req: CheckoutRequest) -> AppResult<Checko
         }
 
         let sale = tx.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?;
+        // One immutable financial event covers both the sale header and all
+        // line items. It commits or rolls back with checkout.
+        let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+        let waiter_entity_id: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+            [req.waiter_id], |r| r.get(0),
+        ).optional()?;
+        let waiter_entity_id = waiter_entity_id.unwrap_or_else(|| format!("{installation_id}:{}", req.waiter_id));
+        crate::database::entity_ids::register(tx, "waiters", &waiter_entity_id, req.waiter_id)?;
+        let sale_entity_id = format!("{installation_id}:{sale_id}");
+        crate::database::entity_ids::register(tx, "sales", &sale_entity_id, sale_id)?;
+        let mut item_entity_ids = Vec::with_capacity(items.len());
+        for line in &items {
+            let mapped: Option<String> = tx.query_row(
+                "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='items' AND local_id=?1",
+                [line.item_id], |r| r.get(0),
+            ).optional()?;
+            let item_entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{}", line.item_id));
+            crate::database::entity_ids::register(tx, "items", &item_entity_id, line.item_id)?;
+            item_entity_ids.push(item_entity_id);
+            crate::database::entity_ids::register(
+                tx, "sale_items", &format!("{installation_id}:{}", line.id), line.id
+            )?;
+        }
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "sales", &sale_entity_id, "upsert",
+            &serde_json::json!({
+                "origin_installation_id": installation_id,
+                "local_id": sale_id,
+                "waiter_entity_id": waiter_entity_id,
+                "sale": sale,
+                "items": items,
+                "item_entity_ids": item_entity_ids,
+            }),
+        )?;
 
         Ok(CheckoutResult { sale, items })
     })
@@ -224,12 +259,33 @@ pub fn reverse_sale(conn: &Connection, sale_id: i64) -> AppResult<Sale> {
         )));
     }
 
-    conn.execute(
-        "UPDATE sales SET is_reversed = 1, reversed_at = datetime('now') WHERE id = ?1",
+    let tx = conn.unchecked_transaction()?;
+    let changed = tx.execute(
+        "UPDATE sales SET is_reversed = 1, reversed_at = datetime('now')
+         WHERE id = ?1 AND is_reversed = 0",
         [sale_id],
     )?;
-
-    Ok(conn.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?)
+    if changed != 1 {
+        return Err(AppError::Validation("this sale has already been reversed".into()));
+    }
+    let reversed = tx.query_row("SELECT * FROM sales WHERE id = ?1", [sale_id], Sale::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let mapped: Option<String> = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1",
+        [sale_id], |r| r.get(0),
+    ).optional()?;
+    let sale_entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{sale_id}"));
+    crate::database::entity_ids::register(&tx, "sales", &sale_entity_id, sale_id)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "sale_reversals", &sale_entity_id, "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "sale_entity_id": sale_entity_id,
+            "sale": reversed,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(reversed)
 }
 
 #[cfg(test)]
@@ -278,6 +334,79 @@ mod tests {
 
         // Waiter receivable should reflect the new unsettled sale.
         assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 22.0);
+    }
+
+    #[test]
+    fn checkout_queues_one_event_with_sale_and_all_lines() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 2 }], note: None,
+        }).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id, payload FROM cloud_outbox WHERE entity_type='sales'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!(entity_id.ends_with(&format!(":{}", result.sale.id)));
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["sale"]["total_amount"], 6.0);
+        assert_eq!(event["items"].as_array().unwrap().len(), 1);
+        assert_eq!(event["items"][0]["quantity"], 2);
+    }
+
+    #[test]
+    fn checkout_preserves_remote_waiter_and_item_identities() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Remote Waiter", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Tea".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote:waiter' WHERE entity_type='waiters' AND local_id=?1", [waiter.id]).unwrap();
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote:item' WHERE entity_type='items' AND local_id=?1", [item.id]).unwrap();
+        let checkout = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap();
+        let payload: String = conn.query_row(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='sales'", [], |r| r.get(0),
+        ).unwrap();
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["waiter_entity_id"], "remote:waiter");
+        assert_eq!(event["item_entity_ids"][0], "remote:item");
+        let sale_id: String = conn.query_row("SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1", [checkout.sale.id], |r| r.get(0)).unwrap();
+        assert!(!sale_id.is_empty());
+    }
+
+    #[test]
+    fn outbox_failure_rolls_back_sale_and_lines() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_sale_cloud_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='sales'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        let result = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 2 }], note: None,
+        });
+        assert!(result.is_err());
+        for table in ["sales", "sale_items"] {
+            let count: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "{table} should roll back");
+        }
     }
 
     #[test]
@@ -352,6 +481,75 @@ mod tests {
         assert!(reversed.is_reversed);
         assert!(reversed.reversed_at.is_some());
         assert_eq!(waiter_service::get_receivable(&conn, waiter.id).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn reversal_records_one_cloud_event_without_duplicate_sale() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        reverse_sale(&conn, sale.id).unwrap();
+        assert!(reverse_sale(&conn, sale.id).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cloud_outbox WHERE entity_type='sale_reversals'",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0)).unwrap();
+        assert_eq!(sales, 1);
+    }
+
+    #[test]
+    fn reversal_reuses_original_sale_cloud_id() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Coffee".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote-device:sale'
+                      WHERE entity_type='sales' AND local_id=?1", [sale.id]).unwrap();
+        reverse_sale(&conn, sale.id).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='sale_reversals'",
+            [], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(entity_id, "remote-device:sale");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap()["sale_entity_id"], "remote-device:sale");
+    }
+
+    #[test]
+    fn reversal_rolls_back_if_cloud_outbox_fails() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Cola".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap().sale;
+        conn.execute_batch(
+            "CREATE TRIGGER reject_reversal_outbox BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='sale_reversals'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(reverse_sale(&conn, sale.id).is_err());
+        let still_open: i64 = conn.query_row(
+            "SELECT is_reversed FROM sales WHERE id=?1", [sale.id], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(still_open, 0);
     }
 
     #[test]

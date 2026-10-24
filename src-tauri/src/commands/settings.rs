@@ -15,6 +15,18 @@ pub fn get_settings(db: State<Db>) -> AppResult<Settings> {
     settings_service::get_settings(&conn)
 }
 
+/// Read the installation identity created at database startup.
+/// This does not create a new ID and is independent of the logged-in user.
+#[tauri::command]
+pub fn get_installation_id(db: State<Db>) -> AppResult<String> {
+    let conn = db.lock();
+    Ok(conn.query_row(
+        "SELECT value FROM sync_meta WHERE key = 'device_id'",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 #[tauri::command]
 pub fn update_general_settings(
     db: State<Db>,

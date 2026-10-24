@@ -17,6 +17,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("011_raw_material_closing_audit.sql", include_str!("../../../migrations/011_raw_material_closing_audit.sql")),
     ("012_guard_closed_material_purchases.sql", include_str!("../../../migrations/012_guard_closed_material_purchases.sql")),
     ("013_guard_finalized_financials.sql", include_str!("../../../migrations/013_guard_finalized_financials.sql")),
+    ("014_cloud_pull_cursor.sql", include_str!("../../../migrations/014_cloud_pull_cursor.sql")),
+    ("015_cloud_applied_events.sql", include_str!("../../../migrations/015_cloud_applied_events.sql")),
+    ("016_cloud_outbox.sql", include_str!("../../../migrations/016_cloud_outbox.sql")),
+    ("017_cloud_entity_ids.sql", include_str!("../../../migrations/017_cloud_entity_ids.sql")),
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
@@ -80,6 +84,34 @@ mod tests {
         conn.execute("UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now') WHERE id=1", []).unwrap();
         let value: f64 = conn.query_row("SELECT closing_value FROM raw_material_month_closing_lines WHERE id=1", [], |r| r.get(0)).unwrap();
         assert_eq!(value, 1500.0);
+    }
+
+    #[test]
+    fn cloud_entity_ids_map_is_unique_and_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        run(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO cloud_entity_ids(entity_type,entity_id,local_id) VALUES('items','device-a:1',1)",
+            [],
+        ).unwrap();
+        assert!(conn.execute(
+            "INSERT INTO cloud_entity_ids(entity_type,entity_id,local_id) VALUES('items','device-b:1',1)",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "INSERT INTO cloud_entity_ids(entity_type,entity_id,local_id) VALUES('items','device-a:1',2)",
+            [],
+        ).is_err());
+        conn.execute(
+            "INSERT INTO cloud_entity_ids(entity_type,entity_id,local_id) VALUES('waiters','device-a:1',1)",
+            [],
+        ).unwrap();
+        let mapped: i64 = conn.query_row(
+            "SELECT local_id FROM cloud_entity_ids WHERE entity_type='items' AND entity_id='device-a:1'",
+            [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(mapped, 1);
     }
 
     #[test]

@@ -2,7 +2,7 @@ import * as api from "./api.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
 import { renderNavItems, setActiveNavItem } from "./components/sidebar.js";
-import { setHeaderTitle, clearHeaderActions } from "./components/header.js";
+import { setHeaderTitle, clearHeaderActions, setHeaderSyncStatus } from "./components/header.js";
 import { mountToastStack } from "./components/notification.js";
 
 const appRoot = document.getElementById("app");
@@ -15,8 +15,9 @@ function buildLayouts() {
   const shell = document.createElement("div"); shell.className="app-shell"; shell.style.display="none";
   shell.innerHTML = `
     <aside class="sidebar"><div class="sidebar-brand"><img src="assets/logo.svg" alt="NATRA"/><span class="sidebar-brand-natra">NATRA</span><span class="sidebar-brand-name">Cashier</span></div><nav class="sidebar-nav" id="sidebar-nav"></nav><div class="sidebar-footer"><div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem"><span id="current-user-label" style="color:var(--color-paper-ink-soft);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span><button id="logout-btn" style="color:var(--color-navy-bright);font-size:var(--text-sm);font-weight:650">Log out</button></div><div style="margin-top:.45rem;color:#6f88a3;font-size:.68rem">NATRA Management</div></div></aside>
-    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
+    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div><button id="header-sync-btn" class="btn btn-primary btn-sm" type="button" disabled title="Cloud synchronization is not configured yet" aria-label="Sync now (not yet available)">↻ Sync Now</button></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
   appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"));
+  setHeaderSyncStatus(shell, "ready", false);
   shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
 }

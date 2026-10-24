@@ -3,7 +3,7 @@
 //! Purchases are independent cost events — not linked to specific
 //! cookable dishes — matching 003_raw_materials.sql.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::errors::{AppError, AppResult};
 use crate::models::{RawMaterial, RawMaterialPurchase};
@@ -12,12 +12,26 @@ pub fn create_raw_material(conn: &Connection, name: &str, unit: &str) -> AppResu
     if name.trim().is_empty() {
         return Err(AppError::Validation("raw material name is required".into()));
     }
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO raw_materials (name, unit) VALUES (?1, ?2)",
         rusqlite::params![name, unit],
     )?;
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row("SELECT * FROM raw_materials WHERE id = ?1", [id], RawMaterial::from_row)?)
+    let id = tx.last_insert_rowid();
+    let material = tx.query_row("SELECT * FROM raw_materials WHERE id = ?1", [id], RawMaterial::from_row)?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let entity_id = format!("{installation_id}:{id}");
+    crate::database::entity_ids::register(&tx, "raw_materials", &entity_id, id)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "raw_materials", &entity_id, "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": id,
+            "material": material,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(material)
 }
 
 pub fn list_raw_materials(conn: &Connection, only_active: bool) -> AppResult<Vec<RawMaterial>> {
@@ -49,17 +63,38 @@ pub fn record_purchase(
     }
     let total_cost = quantity * unit_cost;
 
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO raw_material_purchases (raw_material_id, quantity, unit_cost, total_cost, supplier, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![raw_material_id, quantity, unit_cost, total_cost, supplier, note],
     )?;
-    let id = conn.last_insert_rowid();
-    Ok(conn.query_row(
+    let id = tx.last_insert_rowid();
+    let purchase = tx.query_row(
         "SELECT * FROM raw_material_purchases WHERE id = ?1",
         [id],
         RawMaterialPurchase::from_row,
-    )?)
+    )?;
+    let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let material_entity_id: String = tx.query_row(
+        "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+        [raw_material_id], |row| row.get(0),
+    ).optional()?.unwrap_or_else(|| format!("{installation_id}:{raw_material_id}"));
+    // Legacy local material rows get a persistent identity before referencing them.
+    crate::database::entity_ids::register(&tx, "raw_materials", &material_entity_id, raw_material_id)?;
+    let entity_id = format!("{installation_id}:{id}");
+    crate::database::entity_ids::register(&tx, "raw_material_purchases", &entity_id, id)?;
+    crate::sync::queue::enqueue_cloud_event(
+        &tx, "raw_material_purchases", &entity_id, "upsert",
+        &serde_json::json!({
+            "origin_installation_id": installation_id,
+            "local_id": id,
+            "raw_material_entity_id": material_entity_id,
+            "purchase": purchase,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(purchase)
 }
 
 pub fn list_purchases(
@@ -114,6 +149,65 @@ mod tests {
 
         record_purchase(&conn, chicken.id, 5.0, 3.0, None, None).unwrap();
         assert_eq!(total_cost(&conn, None, None).unwrap(), 21.0);
+    }
+
+    #[test]
+    fn material_and_purchase_creation_generate_outbox_events() {
+        let conn = db();
+        let material = create_raw_material(&conn, "Sugar", "kg").unwrap();
+        let purchase = record_purchase(&conn, material.id, 2.0, 10.0, None, None).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cloud_outbox", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 2);
+        let payload: String = conn.query_row(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='raw_material_purchases'",
+            [], |r| r.get(0)
+        ).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(json["purchase"]["id"], purchase.id);
+        assert_eq!(json["purchase"]["total_cost"], 20.0);
+    }
+
+    #[test]
+    fn material_and_purchase_roll_back_on_outbox_failure() {
+        let conn = db();
+        let material = create_raw_material(&conn, "Flour", "kg").unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_raw_outbox BEFORE INSERT ON cloud_outbox
+             BEGIN SELECT RAISE(FAIL, 'outbox unavailable'); END;"
+        ).unwrap();
+        assert!(create_raw_material(&conn, "Failed Material", "kg").is_err());
+        assert!(record_purchase(&conn, material.id, 1.0, 8.0, None, None).is_err());
+        let material_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM raw_materials", [], |r| r.get(0)
+        ).unwrap();
+        let purchase_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM raw_material_purchases", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(material_count, 1);
+        assert_eq!(purchase_count, 0);
+    }
+
+    #[test]
+    fn purchase_keeps_original_material_cloud_identity() {
+        let conn = db();
+        let material = create_raw_material(&conn, "Rice", "kg").unwrap();
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='other-device:72' WHERE entity_type='raw_materials' AND local_id=?1",
+            [material.id],
+        ).unwrap();
+        let purchase = record_purchase(&conn, material.id, 2.0, 7.0, None, None).unwrap();
+        let (entity_id, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='raw_material_purchases'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(
+            crate::database::entity_ids::lookup(&conn, "raw_material_purchases", &entity_id).unwrap(),
+            Some(purchase.id),
+        );
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["raw_material_entity_id"], "other-device:72");
     }
 
     #[test]

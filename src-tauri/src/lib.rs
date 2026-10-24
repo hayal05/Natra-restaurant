@@ -35,13 +35,8 @@ pub fn run() {
 
             app.manage(db);
 
-            // Sync is a no-op every tick until Settings > sync_enabled
-            // is turned on (see sync::manager::run_once), so it's safe
-            // to always start the loop rather than gating it here.
-            sync::start_background(app.handle().clone());
-
-            // Same pattern: a no-op every tick until Settings >
-            // backup_enabled is turned on (it's on by default).
+            // Cloud sync is manual-only. Do not start a background sync loop.
+            // Scheduled local backups remain independent of synchronization.
             backup::start_background(app.handle().clone());
             backup::archive_manager::start_daily(app.handle().clone());
 
@@ -86,6 +81,7 @@ pub fn run() {
             commands::reports::cash_flow_by_year,
             commands::dashboard::dashboard_summary,
             commands::settings::get_settings,
+            commands::settings::get_installation_id,
             commands::settings::update_general_settings,
             commands::settings::enable_sync,
             commands::settings::disable_sync,
