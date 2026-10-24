@@ -20,8 +20,10 @@ pub fn create_expense(conn: &Connection, category: &str, description: Option<&st
     let id = tx.last_insert_rowid();
     let expense = tx.query_row("SELECT * FROM expenses WHERE id = ?1", [id], Expense::from_row)?;
     let installation_id = crate::database::connection::ensure_installation_id(&tx)?;
+    let entity_id = format!("{installation_id}:{id}");
+    crate::database::entity_ids::register(&tx, "expenses", &entity_id, id)?;
     crate::sync::queue::enqueue_cloud_event(
-        &tx, "expenses", &format!("{installation_id}:{id}"), "upsert",
+        &tx, "expenses", &entity_id, "upsert",
         &serde_json::json!({
             "origin_installation_id": installation_id,
             "local_id": id,
@@ -119,6 +121,20 @@ mod tests {
         assert!(entity_id.ends_with(&format!(":{}", expense.id)));
         let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(event["expense"]["amount"], 42.0);
+    }
+
+    #[test]
+    fn expense_cloud_identity_is_registered_with_creation() {
+        let conn = db();
+        let expense = create_expense(&conn, "Rent", None, 50.0, None, None).unwrap();
+        let entity_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_outbox WHERE entity_type='expenses'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(
+            crate::database::entity_ids::lookup(&conn, "expenses", &entity_id).unwrap(),
+            Some(expense.id),
+        );
     }
 
     #[test]
