@@ -8,7 +8,7 @@
 //! whole sale is rejected and nothing is saved.
 
 use chrono::{NaiveDateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::database::schema::payment_method as pm;
@@ -154,14 +154,36 @@ pub fn checkout(conn: &mut Connection, req: CheckoutRequest) -> AppResult<Checko
         // One immutable financial event covers both the sale header and all
         // line items. It commits or rolls back with checkout.
         let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+        let waiter_entity_id: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+            [req.waiter_id], |r| r.get(0),
+        ).optional()?;
+        let waiter_entity_id = waiter_entity_id.unwrap_or_else(|| format!("{installation_id}:{}", req.waiter_id));
+        crate::database::entity_ids::register(tx, "waiters", &waiter_entity_id, req.waiter_id)?;
+        let sale_entity_id = format!("{installation_id}:{sale_id}");
+        crate::database::entity_ids::register(tx, "sales", &sale_entity_id, sale_id)?;
+        let mut item_entity_ids = Vec::with_capacity(items.len());
+        for line in &items {
+            let mapped: Option<String> = tx.query_row(
+                "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='items' AND local_id=?1",
+                [line.item_id], |r| r.get(0),
+            ).optional()?;
+            let item_entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{}", line.item_id));
+            crate::database::entity_ids::register(tx, "items", &item_entity_id, line.item_id)?;
+            item_entity_ids.push(item_entity_id);
+            crate::database::entity_ids::register(
+                tx, "sale_items", &format!("{installation_id}:{}", line.id), line.id
+            )?;
+        }
         crate::sync::queue::enqueue_cloud_event(
-            tx, "sales", &format!("{installation_id}:{sale_id}"), "upsert",
+            tx, "sales", &sale_entity_id, "upsert",
             &serde_json::json!({
                 "origin_installation_id": installation_id,
                 "local_id": sale_id,
-                "waiter_entity_id": format!("{installation_id}:{}", req.waiter_id),
+                "waiter_entity_id": waiter_entity_id,
                 "sale": sale,
                 "items": items,
+                "item_entity_ids": item_entity_ids,
             }),
         )?;
 
@@ -329,6 +351,30 @@ mod tests {
         assert_eq!(event["sale"]["total_amount"], 6.0);
         assert_eq!(event["items"].as_array().unwrap().len(), 1);
         assert_eq!(event["items"][0]["quantity"], 2);
+    }
+
+    #[test]
+    fn checkout_preserves_remote_waiter_and_item_identities() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Remote Waiter", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None, name: "Tea".into(), item_type: ItemType::ReadyMade,
+            purchase_cost: Some(1.0), selling_price: 3.0,
+        }).unwrap();
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote:waiter' WHERE entity_type='waiters' AND local_id=?1", [waiter.id]).unwrap();
+        conn.execute("UPDATE cloud_entity_ids SET entity_id='remote:item' WHERE entity_type='items' AND local_id=?1", [item.id]).unwrap();
+        let checkout = checkout(&mut conn, CheckoutRequest {
+            waiter_id: waiter.id, user_id: None, payment_method: PaymentMethod::Cash,
+            lines: vec![CartLine { item_id: item.id, quantity: 1 }], note: None,
+        }).unwrap();
+        let payload: String = conn.query_row(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='sales'", [], |r| r.get(0),
+        ).unwrap();
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["waiter_entity_id"], "remote:waiter");
+        assert_eq!(event["item_entity_ids"][0], "remote:item");
+        let sale_id: String = conn.query_row("SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1", [checkout.sale.id], |r| r.get(0)).unwrap();
+        assert!(!sale_id.is_empty());
     }
 
     #[test]
