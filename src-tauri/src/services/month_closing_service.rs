@@ -121,6 +121,22 @@ pub struct ClosingState {
     pub lines: Vec<ValuedClosing>,
 }
 
+// Attach stable material identities to closing lines without changing valuation.
+fn closing_material_ids(tx: &rusqlite::Transaction<'_>, lines: &[ValuedClosing]) -> AppResult<Vec<String>> {
+    let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    let mut ids = Vec::with_capacity(lines.len());
+    for line in lines {
+        let mapped: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [line.raw_material_id], |row| row.get(0),
+        ).optional()?;
+        let entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{}", line.raw_material_id));
+        crate::database::entity_ids::register(tx, "raw_materials", &entity_id, line.raw_material_id)?;
+        ids.push(entity_id);
+    }
+    Ok(ids)
+}
+
 fn latest_closing(conn: &Connection) -> AppResult<Option<(String, String)>> {
     Ok(conn.query_row(
         "SELECT period_month,status FROM raw_material_month_closings ORDER BY period_month DESC LIMIT 1",
@@ -214,7 +230,7 @@ pub fn save_draft(
         let result = ClosingState { month: month.into(), status: "draft".into(), lines: valued };
         crate::sync::queue::enqueue_cloud_event(
             tx, "material_month_closings", month, "upsert",
-            &serde_json::json!({ "closing": result }),
+            &serde_json::json!({ "closing": result, "material_entity_ids": closing_material_ids(tx, &result.lines)? }),
         )?;
         Ok(result)
     })
@@ -266,7 +282,7 @@ pub fn close_month(conn: &mut Connection, month: &str) -> AppResult<ClosingState
         // the final valued lines in the same transaction as finalization.
         crate::sync::queue::enqueue_cloud_event(
             tx, "material_month_closings", month, "upsert",
-            &serde_json::json!({ "closing": result }),
+            &serde_json::json!({ "closing": result, "material_entity_ids": closing_material_ids(tx, &result.lines)? }),
         )?;
         Ok(result)
     })
@@ -370,6 +386,28 @@ mod tests {
         assert_eq!(close_month(&mut c,"2025-10-01").unwrap().lines[0].consumed_value,4800.0);
         let count:i64=c.query_row("SELECT COUNT(*) FROM raw_material_closing_audit",[],|r|r.get(0)).unwrap();
         assert_eq!(count,1);
+    }
+
+    #[test]
+    fn closing_events_reference_original_material_identity() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='remote:material'
+             WHERE entity_type='raw_materials' AND local_id=?1", [material.id],
+        ).unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='material_month_closings' ORDER BY rowid"
+        ).unwrap();
+        let events: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap()
+            .map(|r| r.unwrap()).collect();
+        assert_eq!(events.len(), 2);
+        for payload in events {
+            let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(event["material_entity_ids"][0], "remote:material");
+        }
     }
 
     #[test]
