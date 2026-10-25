@@ -54,16 +54,24 @@ pub(crate) fn apply_remote_waiter(
     if entity_id.trim().is_empty() || waiter.full_name.trim().is_empty() {
         return Err(invalid());
     }
-    if crate::database::entity_ids::lookup(tx, "waiters", entity_id)?.is_some() {
-        return Err(AppError::Validation("waiter identity already imported".into()));
+    if let Some(local_id) = crate::database::entity_ids::lookup(tx, "waiters", entity_id)? {
+        // Keep the local waiter ID stable for sale and settlement references.
+        let updated = tx.execute(
+            "UPDATE waiters SET full_name=?1,phone=?2,profile_photo=?3,
+             is_active=?4,updated_at=?5 WHERE id=?6",
+            rusqlite::params![waiter.full_name,waiter.phone,waiter.profile_photo,
+                waiter.is_active,waiter.updated_at,local_id],
+        )?;
+        if updated != 1 { return Err(invalid()); }
+    } else {
+        tx.execute(
+            "INSERT INTO waiters(full_name,phone,profile_photo,is_active,created_at,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![waiter.full_name,waiter.phone,waiter.profile_photo,
+                waiter.is_active,waiter.created_at,waiter.updated_at],
+        )?;
+        crate::database::entity_ids::register(tx, "waiters", entity_id, tx.last_insert_rowid())?;
     }
-    tx.execute(
-        "INSERT INTO waiters(full_name,phone,profile_photo,is_active,created_at,updated_at)
-         VALUES(?1,?2,?3,?4,?5,?6)",
-        rusqlite::params![waiter.full_name,waiter.phone,waiter.profile_photo,
-            waiter.is_active,waiter.created_at,waiter.updated_at],
-    )?;
-    crate::database::entity_ids::register(tx, "waiters", entity_id, tx.last_insert_rowid())?;
     Ok(())
 }
 
@@ -244,7 +252,32 @@ mod settlement_outbox_tests {
     }
 
     #[test]
-    fn remote_waiter_import_uses_local_identity_and_rejects_duplicate() {
+    fn remote_waiter_update_retains_identity_and_changes_active_status() {
+        let mut conn = db();
+        let waiter = create_waiter(&conn, "Old Name", None, None).unwrap();
+        let cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+            [waiter.id], |r| r.get(0),
+        ).unwrap();
+        let mut updated = serde_json::to_value(waiter.clone()).unwrap();
+        updated["full_name"] = serde_json::json!("New Name");
+        updated["is_active"] = serde_json::json!(false);
+        let payload = serde_json::json!({"waiter":updated});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("updated-waiter",1)],
+            |tx,_,_|apply_remote_waiter(tx,&cloud_id,&payload)
+        ).unwrap();
+        let (name,active):(String,bool) = conn.query_row(
+            "SELECT full_name,is_active FROM waiters WHERE id=?1",
+            [waiter.id],|r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(name,"New Name");
+        assert!(!active);
+        assert_eq!(crate::database::entity_ids::lookup(&conn,"waiters",&cloud_id).unwrap(),Some(waiter.id));
+    }
+
+    #[test]
+    fn remote_waiter_import_uses_local_identity_and_replays_updates() {
         let mut conn = db();
         let payload = serde_json::json!({"waiter":{
             "id":999,"full_name":"Remote Waiter","phone":null,"profile_photo":null,
@@ -262,11 +295,13 @@ mod settlement_outbox_tests {
             "SELECT full_name FROM waiters WHERE id=?1",[local],|r|r.get(0),
         ).unwrap();
         assert_eq!(name,"Remote Waiter");
-        assert!(crate::database::connection::apply_cloud_event_batch(
+        crate::database::connection::apply_cloud_event_batch(
             &mut conn,&[("remote-waiter-2",2)],
             |tx,_,_|apply_remote_waiter(tx,"remote:999",&payload)
-        ).is_err());
-        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        ).unwrap();
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM waiters",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,1);
     }
 
     #[test]
