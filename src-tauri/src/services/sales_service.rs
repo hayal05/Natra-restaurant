@@ -239,10 +239,13 @@ pub(crate) fn apply_remote_sale(
         }
         mapped_items.push(item_id);
     }
-    let quantity: i64 = lines.iter().map(|l| l.quantity).sum();
+    let quantity = lines.iter().try_fold(0_i64, |total, line| {
+        total.checked_add(line.quantity).ok_or_else(invalid)
+    })?;
     let amount: f64 = lines.iter().map(|l| l.line_total).sum();
     let cost: f64 = lines.iter().map(|l| l.line_cost).sum();
-    if sale.total_quantity != quantity || (sale.total_amount - amount).abs() > 0.01
+    if !amount.is_finite() || !cost.is_finite()
+        || sale.total_quantity != quantity || (sale.total_amount - amount).abs() > 0.01
         || (sale.total_cost - cost).abs() > 0.01
         || (sale.total_profit - (amount - cost)).abs() > 0.01
     {
