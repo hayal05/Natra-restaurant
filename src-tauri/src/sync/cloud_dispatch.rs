@@ -253,6 +253,20 @@ mod tests {
         assert_eq!((purchase_total,expense_total),(12.0,25.0));
         assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
 
+        // A new receipt for an already imported purchase must not double
+        // count material cost or move the download cursor.
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-purchase-receipt",4)],
+            |tx,_,_|dispatch(tx,&purchase),
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+        assert!(!connection::is_cloud_event_applied(
+            &conn,"duplicate-purchase-receipt").unwrap());
+        assert_eq!(conn.query_row(
+            "SELECT SUM(total_cost) FROM raw_material_purchases",
+            [],|r|r.get::<_,f64>(0),
+        ).unwrap(),12.0);
+
         let bad_purchase = DownloadedEvent {
             entity_type:"raw_material_purchases".into(),entity_id:"device-c:purchase".into(),
             operation:"upsert".into(),
