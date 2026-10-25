@@ -269,6 +269,45 @@ pub(crate) fn apply_remote_sale(
     Ok(())
 }
 
+/// Replay a remote reversal by stable sale identity, without re-running the
+/// local 24-hour user-action check. The originating device already validated it.
+/// The caller commits this change with its cloud receipt and cursor.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_sale_reversal(
+    tx: &rusqlite::Transaction<'_>,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote sale reversal".into());
+    let cloud_id = payload.get("sale_entity_id").and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty()).ok_or_else(invalid)?;
+    let remote: Sale = serde_json::from_value(
+        payload.get("sale").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    if !remote.is_reversed || remote.reversed_at.as_deref().unwrap_or("").is_empty() {
+        return Err(invalid());
+    }
+    let local_id = crate::database::entity_ids::lookup(tx, "sales", cloud_id)?
+        .ok_or_else(|| AppError::Validation("unknown sale identity in remote reversal".into()))?;
+    let current = tx.query_row(
+        "SELECT * FROM sales WHERE id=?1", [local_id], Sale::from_row
+    )?;
+    if current.is_reversed {
+        return Err(AppError::Validation("sale already reversed; refusing duplicate financial change".into()));
+    }
+    if (current.total_amount - remote.total_amount).abs() > 0.01
+        || (current.total_cost - remote.total_cost).abs() > 0.01
+        || current.total_quantity != remote.total_quantity
+        || !remote.total_amount.is_finite() || !remote.total_cost.is_finite()
+    {
+        return Err(invalid());
+    }
+    tx.execute(
+        "UPDATE sales SET is_reversed=1,reversed_at=?1 WHERE id=?2 AND is_reversed=0",
+        rusqlite::params![remote.reversed_at, local_id],
+    )?;
+    Ok(())
+}
+
 /// List sales, optionally narrowed to a waiter and/or a `created_at` window.
 /// `from`/`to` are inclusive and expected in the same
 /// `"YYYY-MM-DD HH:MM:SS"` shape the rest of the app uses for date-range
@@ -625,6 +664,42 @@ mod tests {
         assert_eq!(count, 1);
         let sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0)).unwrap();
         assert_eq!(sales, 1);
+    }
+
+    #[test]
+    fn remote_reversal_changes_mapped_sale_only_once() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id:None,name:"Tea".into(),item_type:ItemType::ReadyMade,
+            purchase_cost:Some(1.0),selling_price:3.0
+        }).unwrap();
+        let sale = checkout(&mut conn, CheckoutRequest {
+            waiter_id:waiter.id,user_id:None,payment_method:PaymentMethod::Cash,
+            lines:vec![CartLine{item_id:item.id,quantity:1}],note:None
+        }).unwrap().sale;
+        let cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='sales' AND local_id=?1",
+            [sale.id], |r| r.get(0),
+        ).unwrap();
+        let mut snapshot = sale.clone();
+        snapshot.is_reversed = true;
+        snapshot.reversed_at = Some("2026-01-01 12:00:00".into());
+        let payload = serde_json::json!({"sale_entity_id":cloud_id,"sale":snapshot});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-reversal",1)],
+            |tx,_,_| apply_remote_sale_reversal(tx,&payload)
+        ).unwrap();
+        let updated = conn.query_row(
+            "SELECT * FROM sales WHERE id=?1", [sale.id], Sale::from_row
+        ).unwrap();
+        assert!(updated.is_reversed);
+        assert_eq!(updated.reversed_at.as_deref(),Some("2026-01-01 12:00:00"));
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("different-event",2)],
+            |tx,_,_| apply_remote_sale_reversal(tx,&payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
