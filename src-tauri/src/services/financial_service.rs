@@ -34,6 +34,38 @@ pub fn create_expense(conn: &Connection, category: &str, description: Option<&st
     Ok(expense)
 }
 
+/// Apply a downloaded expense once, in the caller's cloud batch transaction.
+/// Cloud event receipts and the pull cursor are committed by that caller.
+/// Never upsert financial records or trust the remote SQLite row ID.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_expense(
+    tx: &rusqlite::Transaction<'_>,
+    entity_id: &str,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let expense: Expense = serde_json::from_value(
+        payload.get("expense").cloned().ok_or_else(|| AppError::Validation("missing expense payload".into()))?
+    ).map_err(|_| AppError::Validation("invalid expense payload".into()))?;
+    expense.validate()?;
+    if !expense.amount.is_finite() {
+        return Err(AppError::Validation("expense amount must be finite".into()));
+    }
+    if crate::database::entity_ids::lookup(tx, "expenses", entity_id)?.is_some() {
+        return Err(AppError::Validation("expense already exists; refusing financial overwrite".into()));
+    }
+    tx.execute(
+        "INSERT INTO expenses(category,description,amount,expense_date,note,created_at,updated_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        rusqlite::params![
+            expense.category, expense.description, expense.amount, expense.expense_date,
+            expense.note, expense.created_at, expense.updated_at
+        ],
+    )?;
+    let local_id = tx.last_insert_rowid();
+    crate::database::entity_ids::register(tx, "expenses", entity_id, local_id)?;
+    Ok(())
+}
+
 pub fn list_expenses(conn: &Connection, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<Expense>> {
     // Keep the prepared statement alive for the whole query_map/collect operation.
     // Returning from each match arm avoids borrowing the statement across the
@@ -149,6 +181,34 @@ mod tests {
             "SELECT COUNT(*) FROM expenses WHERE category='Utilities'", [], |r| r.get(0)
         ).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn downloaded_expense_is_applied_once_with_cloud_receipt() {
+        let mut conn = db();
+        let expense = create_expense(&conn, "Rent", None, 25.0, None, None).unwrap();
+        let payload = serde_json::json!({ "expense": expense });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn, &[("remote-event-1", 1)],
+            |tx, _, _| apply_remote_expense(tx, "other-device:88", &payload)
+        ).unwrap();
+        assert!(crate::database::connection::is_cloud_event_applied(&conn, "remote-event-1").unwrap());
+        assert_eq!(crate::database::entity_ids::lookup(&conn, "expenses", "other-device:88").unwrap(), Some(2));
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM expenses", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn duplicate_remote_expense_identity_rolls_back_batch() {
+        let mut conn = db();
+        let expense = create_expense(&conn, "Rent", None, 25.0, None, None).unwrap();
+        let payload = serde_json::json!({ "expense": expense });
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn, &[("remote-event-1", 1), ("remote-event-2", 2)],
+            |tx, _, _| apply_remote_expense(tx, "other-device:88", &payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(), 0);
+        assert_eq!(crate::database::entity_ids::lookup(&conn, "expenses", "other-device:88").unwrap(), None);
     }
 
     #[test]
