@@ -144,6 +144,20 @@ mod tests {
         assert_eq!((linked_item,qty,line_total),(item_id,2,10.0));
         assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),4);
         assert!(connection::is_cloud_event_applied(&conn,"remote-sale").unwrap());
+        // A distinct cloud event ID must not duplicate the same financial sale.
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-sale-event",5)],
+            |tx,_,_|dispatch(tx,&sale),
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),4);
+        assert!(!connection::is_cloud_event_applied(&conn,"duplicate-sale-event").unwrap());
+        let sale_count:i64=conn.query_row(
+            "SELECT COUNT(*) FROM sales",[],|r|r.get(0),
+        ).unwrap();
+        let line_count:i64=conn.query_row(
+            "SELECT COUNT(*) FROM sale_items",[],|r|r.get(0),
+        ).unwrap();
+        assert_eq!((sale_count,line_count),(1,1));
     }
 
     #[test]
