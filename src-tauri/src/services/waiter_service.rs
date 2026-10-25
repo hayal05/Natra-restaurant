@@ -41,6 +41,32 @@ pub fn create_waiter(conn: &Connection, full_name: &str, phone: Option<&str>, pr
     Ok(waiter)
 }
 
+/// Import a waiter from a remote installation. Never reuse the sender's
+/// local row ID, and never overwrite an existing mapped waiter here.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_waiter(
+    tx: &rusqlite::Transaction<'_>, entity_id: &str, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote waiter".into());
+    let waiter: Waiter = serde_json::from_value(
+        payload.get("waiter").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    if entity_id.trim().is_empty() || waiter.full_name.trim().is_empty() {
+        return Err(invalid());
+    }
+    if crate::database::entity_ids::lookup(tx, "waiters", entity_id)?.is_some() {
+        return Err(AppError::Validation("waiter identity already imported".into()));
+    }
+    tx.execute(
+        "INSERT INTO waiters(full_name,phone,profile_photo,is_active,created_at,updated_at)
+         VALUES(?1,?2,?3,?4,?5,?6)",
+        rusqlite::params![waiter.full_name,waiter.phone,waiter.profile_photo,
+            waiter.is_active,waiter.created_at,waiter.updated_at],
+    )?;
+    crate::database::entity_ids::register(tx, "waiters", entity_id, tx.last_insert_rowid())?;
+    Ok(())
+}
+
 pub fn list_waiters(conn: &Connection, only_active: bool) -> AppResult<Vec<Waiter>> {
     let sql = if only_active { "SELECT * FROM waiters WHERE is_active = 1 ORDER BY full_name" } else { "SELECT * FROM waiters ORDER BY full_name" };
     let mut stmt = conn.prepare(sql)?;
@@ -215,6 +241,32 @@ mod settlement_outbox_tests {
             "INSERT INTO sales (waiter_id, total_quantity, total_amount, total_cost, total_profit, payment_method)
              VALUES (?1, 1, 20, 0, 20, 'cash')", [waiter_id]
         ).unwrap();
+    }
+
+    #[test]
+    fn remote_waiter_import_uses_local_identity_and_rejects_duplicate() {
+        let mut conn = db();
+        let payload = serde_json::json!({"waiter":{
+            "id":999,"full_name":"Remote Waiter","phone":null,"profile_photo":null,
+            "is_active":true,"created_at":"2025-01-01 00:00:00",
+            "updated_at":"2025-01-01 00:00:00"
+        }});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-waiter-1",1)],
+            |tx,_,_|apply_remote_waiter(tx,"remote:999",&payload)
+        ).unwrap();
+        let local = crate::database::entity_ids::lookup(&conn,"waiters","remote:999")
+            .unwrap().unwrap();
+        assert_ne!(local,999);
+        let name: String = conn.query_row(
+            "SELECT full_name FROM waiters WHERE id=?1",[local],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(name,"Remote Waiter");
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-waiter-2",2)],
+            |tx,_,_|apply_remote_waiter(tx,"remote:999",&payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
