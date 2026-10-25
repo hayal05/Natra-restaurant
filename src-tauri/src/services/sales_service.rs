@@ -223,7 +223,11 @@ pub(crate) fn apply_remote_sale(
     let waiter_id = crate::database::entity_ids::lookup(tx, "waiters", waiter_cloud_id)?
         .ok_or_else(|| AppError::Validation("missing mapped waiter for remote sale".into()))?;
     let mut mapped_items = Vec::with_capacity(lines.len());
+    let mut seen_line_ids = std::collections::HashSet::new();
     for (line, cloud_id) in lines.iter().zip(item_cloud_ids) {
+        if !seen_line_ids.insert(line.id) {
+            return Err(invalid());
+        }
         let cloud_id = cloud_id.as_str().ok_or_else(invalid)?;
         let item_id = crate::database::entity_ids::lookup(tx, "items", cloud_id)?
             .ok_or_else(|| AppError::Validation("missing mapped item for remote sale".into()))?;
