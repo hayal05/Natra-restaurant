@@ -47,16 +47,23 @@ pub(crate) fn apply_remote_raw_material(
     if entity_id.trim().is_empty() || material.name.trim().is_empty() || material.unit.trim().is_empty() {
         return Err(invalid());
     }
-    if crate::database::entity_ids::lookup(tx, "raw_materials", entity_id)?.is_some() {
-        return Err(AppError::Validation("raw material identity already imported".into()));
+    if let Some(local_id) = crate::database::entity_ids::lookup(tx, "raw_materials", entity_id)? {
+        // Preserve the local identity referenced by purchases and closings.
+        let updated = tx.execute(
+            "UPDATE raw_materials SET name=?1,unit=?2,is_active=?3,updated_at=?4 WHERE id=?5",
+            rusqlite::params![material.name,material.unit,material.is_active,
+                material.updated_at,local_id],
+        )?;
+        if updated != 1 { return Err(invalid()); }
+    } else {
+        tx.execute(
+            "INSERT INTO raw_materials(name,unit,is_active,created_at,updated_at)
+             VALUES(?1,?2,?3,?4,?5)",
+            rusqlite::params![material.name,material.unit,material.is_active,
+                material.created_at,material.updated_at],
+        )?;
+        crate::database::entity_ids::register(tx, "raw_materials", entity_id, tx.last_insert_rowid())?;
     }
-    tx.execute(
-        "INSERT INTO raw_materials(name,unit,is_active,created_at,updated_at)
-         VALUES(?1,?2,?3,?4,?5)",
-        rusqlite::params![material.name,material.unit,material.is_active,
-            material.created_at,material.updated_at],
-    )?;
-    crate::database::entity_ids::register(tx, "raw_materials", entity_id, tx.last_insert_rowid())?;
     Ok(())
 }
 
@@ -216,7 +223,32 @@ mod tests {
     }
 
     #[test]
-    fn remote_material_import_maps_identity_and_rejects_duplicates() {
+    fn remote_material_update_keeps_purchase_relationship() {
+        let mut conn = db();
+        let material = create_raw_material(&conn, "Rice", "kg").unwrap();
+        record_purchase(&conn, material.id, 2.0, 4.0, None, None).unwrap();
+        let cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [material.id], |r| r.get(0),
+        ).unwrap();
+        let mut updated = serde_json::to_value(material.clone()).unwrap();
+        updated["name"] = serde_json::json!("Rice flour");
+        updated["is_active"] = serde_json::json!(false);
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn, &[("material-update",1)],
+            |tx,_,_|apply_remote_raw_material(tx,&cloud_id,&serde_json::json!({"material":updated})),
+        ).unwrap();
+        let (name,active):(String,bool) = conn.query_row(
+            "SELECT name,is_active FROM raw_materials WHERE id=?1",
+            [material.id],|r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(name,"Rice flour");
+        assert!(!active);
+        assert_eq!(total_cost(&conn,None,None).unwrap(),8.0);
+    }
+
+    #[test]
+    fn remote_material_import_maps_identity_and_replays_updates() {
         let mut conn = db();
         let payload = serde_json::json!({"material":{
             "id":99,"name":"Imported Rice","unit":"kg","is_active":true,
@@ -229,11 +261,13 @@ mod tests {
         let local_id = crate::database::entity_ids::lookup(&conn,"raw_materials","other:99")
             .unwrap().unwrap();
         assert_ne!(local_id,99);
-        assert!(crate::database::connection::apply_cloud_event_batch(
-            &mut conn,&[("duplicate-material-event",2)],
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("material-update-event",2)],
             |tx,_,_|apply_remote_raw_material(tx,"other:99",&payload),
-        ).is_err());
-        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        ).unwrap();
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM raw_materials",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,1);
     }
 
     #[test]
