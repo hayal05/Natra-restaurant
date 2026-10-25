@@ -183,6 +183,70 @@ fn check_sequence(conn: &Connection, month: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Import a first-time month-end snapshot in the enclosing cloud transaction.
+/// Revisions and reopen actions require a separate ordered replay path.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_initial_closing(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote month closing".into());
+    if payload.get("action").is_some() { return Err(invalid()); }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    let status = closing.get("status").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    if status != "draft" && status != "closed" { return Err(invalid()); }
+    if existing_closing(tx, month)?.is_some() {
+        return Err(AppError::Validation("existing month closing requires ordered revision replay".into()));
+    }
+    check_sequence(tx, month)?;
+    let lines = closing.get("lines").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let identities = payload.get("material_entity_ids").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    if lines.len() != identities.len() { return Err(invalid()); }
+    let mut resolved = Vec::with_capacity(lines.len());
+    let mut seen = HashSet::new();
+    for (line, identity) in lines.iter().zip(identities) {
+        let entity = identity.as_str().filter(|s| !s.trim().is_empty()).ok_or_else(invalid)?;
+        let local_id = crate::database::entity_ids::lookup(tx, "raw_materials", entity)?
+            .ok_or_else(|| AppError::Validation("unknown material in remote month closing".into()))?;
+        if !seen.insert(local_id) { return Err(invalid()); }
+        let number = |key: &str| -> AppResult<f64> {
+            let value = line.get(key).and_then(|v| v.as_f64()).ok_or_else(invalid)?;
+            if !value.is_finite() || value < 0.0 { return Err(invalid()); }
+            Ok(value)
+        };
+        let opening_qty = number("opening_quantity")?;
+        let opening_value = number("opening_value")?;
+        let purchased_qty = number("purchased_quantity")?;
+        let purchased_value = number("purchased_value")?;
+        let remaining = number("remaining_quantity")?;
+        let closing_value = number("closing_value")?;
+        let consumed = number("consumed_value")?;
+        if remaining > opening_qty + purchased_qty + EPS
+            || (consumed - (opening_value + purchased_value - closing_value)).abs() > 0.01 {
+            return Err(invalid());
+        }
+        resolved.push((local_id, opening_qty, opening_value, purchased_qty,
+            purchased_value, remaining, closing_value));
+    }
+    tx.execute(
+        "INSERT INTO raw_material_month_closings(period_month,status,closed_at)
+         VALUES(?1,?2,CASE WHEN ?2='closed' THEN datetime('now') ELSE NULL END)",
+        params![month,status],
+    )?;
+    let closing_id = tx.last_insert_rowid();
+    for (id,oq,ov,pq,pv,rq,cv) in resolved {
+        tx.execute(
+            "INSERT INTO raw_material_month_closing_lines
+             (closing_id,raw_material_id,opening_quantity,opening_value,purchased_quantity,
+              purchased_value,remaining_quantity,closing_value)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![closing_id,id,oq,ov,pq,pv,rq,cv],
+        )?;
+    }
+    Ok(())
+}
+
 /// Save a full snapshot of manually entered remaining quantities. Changes are
 /// atomic: an invalid line cannot partially overwrite an existing draft.
 /// No purchase records are added or altered.
@@ -362,6 +426,39 @@ mod tests {
         assert_eq!(b.purchased_value,2500.0);
         assert_eq!(b.weighted_unit_cost,400.0);
         assert_eq!(value_remaining(&b,4.0).unwrap().consumed_value,2400.0);
+    }
+
+    #[test]
+    fn remote_initial_closing_imports_once_without_overwriting() {
+        let mut conn = db();
+        let m = raw_material_service::create_raw_material(&conn,"Beans","kg").unwrap();
+        let identity: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [m.id], |r| r.get(0),
+        ).unwrap();
+        let payload = serde_json::json!({
+            "closing":{"month":"2025-01-01","status":"closed","lines":[{
+                "raw_material_id":999,"opening_quantity":0.0,"opening_value":0.0,
+                "purchased_quantity":3.0,"purchased_value":30.0,
+                "remaining_quantity":1.0,"closing_value":10.0,"consumed_value":20.0
+            }]},
+            "material_entity_ids":[identity]
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-closing",1)],
+            |tx,_,_|apply_remote_initial_closing(tx,&payload)
+        ).unwrap();
+        let row: (i64,String) = conn.query_row(
+            "SELECT raw_material_id,c.status FROM raw_material_month_closing_lines l
+             JOIN raw_material_month_closings c ON c.id=l.closing_id",
+            [],|r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(row,(m.id,"closed".into()));
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-closing",2)],
+            |tx,_,_|apply_remote_initial_closing(tx,&payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
