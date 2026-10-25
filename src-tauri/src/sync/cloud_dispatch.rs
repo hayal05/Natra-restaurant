@@ -31,8 +31,20 @@ pub(crate) fn dispatch(tx: &Transaction<'_>, event: &DownloadedEvent) -> AppResu
         "raw_material_purchases" => raw_material_service::apply_remote_purchase(tx, &event.entity_id, payload),
         "expenses" => financial_service::apply_remote_expense(tx, &event.entity_id, payload),
         "sales" => sales_service::apply_remote_sale(tx, &event.entity_id, payload),
-        "sale_reversals" => sales_service::apply_remote_sale_reversal(tx, payload),
-        "waiter_settlements" => waiter_service::apply_remote_waiter_settlement(tx, payload),
+        "sale_reversals" => {
+            if payload.get("sale_entity_id").and_then(|v| v.as_str())
+                != Some(event.entity_id.as_str()) {
+                return Err(AppError::Validation("reversal identity does not match cloud event".into()));
+            }
+            sales_service::apply_remote_sale_reversal(tx, payload)
+        }
+        "waiter_settlements" => {
+            if payload.get("waiter_entity_id").and_then(|v| v.as_str())
+                != Some(event.entity_id.as_str()) {
+                return Err(AppError::Validation("settlement identity does not match cloud event".into()));
+            }
+            waiter_service::apply_remote_waiter_settlement(tx, payload)
+        },
         "material_month_closings" => {
             if payload.get("action").and_then(|v| v.as_str()) == Some("reopen") {
                 return month_closing_service::apply_remote_closing_reopen(tx, payload);
@@ -67,6 +79,27 @@ mod tests {
     use super::*;
     use crate::database::{connection, migrations};
     use rusqlite::Connection;
+
+    #[test]
+    fn financial_updates_reject_mismatched_cloud_target_before_mutation() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        for (entity_type,payload) in [
+            ("sale_reversals",serde_json::json!({"sale_entity_id":"another:sale"})),
+            ("waiter_settlements",serde_json::json!({"waiter_entity_id":"another:waiter"})),
+        ] {
+            let event=DownloadedEvent {
+                entity_type:entity_type.into(),entity_id:"remote:target".into(),
+                operation:"upsert".into(),payload,
+            };
+            assert!(connection::apply_cloud_event_batch(
+                &mut conn,&[("bad-target-event",1)],|tx,_,_|dispatch(tx,&event)
+            ).is_err());
+            assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),0);
+            assert!(!connection::is_cloud_event_applied(&conn,"bad-target-event").unwrap());
+        }
+    }
 
     #[test]
     fn downloaded_sale_maps_waiter_and_item_and_keeps_financial_totals() {
