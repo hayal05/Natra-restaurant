@@ -194,6 +194,43 @@ mod tests {
     }
 
     #[test]
+    fn negative_remote_sale_values_roll_back_with_cloud_receipt() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let sale = DownloadedEvent {
+            entity_type:"sales".into(),entity_id:"remote:negative-sale".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "origin_installation_id":"remote",
+                "waiter_entity_id":"remote:waiter",
+                "item_entity_ids":["remote:item"],
+                "sale":{"id":42,"waiter_id":99,"user_id":null,
+                    "total_quantity":1,"total_amount":-5.0,"total_cost":2.0,
+                    "total_profit":-7.0,"payment_method":"cash","is_settled":false,
+                    "settled_at":null,"is_reversed":false,"reversed_at":null,"note":null,
+                    "created_at":"2025-01-01 00:00:00",
+                    "updated_at":"2025-01-01 00:00:00"},
+                "items":[{"id":77,"sale_id":42,"item_id":99,"item_name":"Tea",
+                    "item_type":"ready_made","quantity":1,"unit_price":-5.0,
+                    "unit_cost":2.0,"line_total":-5.0,"line_cost":2.0,
+                    "created_at":"2025-01-01 00:00:00"}]
+            }),
+        };
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("negative-sale-event",1)],
+            |tx,_,_|dispatch(tx,&sale)
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),0);
+        assert!(!connection::is_cloud_event_applied(&conn,"negative-sale-event").unwrap());
+        assert_eq!(crate::database::entity_ids::lookup(
+            &conn,"sales","remote:negative-sale").unwrap(),None);
+        assert_eq!(conn.query_row(
+            "SELECT COUNT(*) FROM sales",[],|r|r.get::<_,i64>(0)
+        ).unwrap(),0);
+    }
+
+    #[test]
     fn downloaded_sale_requires_mapped_waiter_and_items_and_rolls_back() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
