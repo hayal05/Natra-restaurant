@@ -129,13 +129,19 @@ mod tests {
                     "created_at":"2025-01-02 00:00:00","updated_at":"2025-01-02 00:00:00"}
             }),
         };
-        let failed = [&expense,&bad_purchase];
+        let another_expense = DownloadedEvent {
+            entity_type:"expenses".into(),entity_id:"device-c:expense".into(),
+            operation:"upsert".into(),payload:expense.payload.clone(),
+        };
+        let failed = [&another_expense,&bad_purchase];
         assert!(connection::apply_cloud_event_batch(
             &mut conn,&[("later-expense-event",4),("invalid-purchase-event",5)],
             |tx,_,seq|dispatch(tx,failed[(seq-4) as usize]),
         ).is_err());
         assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
         assert!(!connection::is_cloud_event_applied(&conn,"later-expense-event").unwrap());
+        assert_eq!(crate::database::entity_ids::lookup(
+            &conn,"expenses","device-c:expense").unwrap(),None);
         assert_eq!(conn.query_row(
             "SELECT COUNT(*) FROM raw_material_purchases",[],|r|r.get::<_,i64>(0)
         ).unwrap(),1);
