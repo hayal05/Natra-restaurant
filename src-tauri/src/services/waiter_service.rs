@@ -151,6 +151,53 @@ pub fn settle_waiter(conn: &Connection, waiter_id: i64) -> AppResult<usize> {
     Ok(affected)
 }
 
+/// Replay a downloaded settlement in the same transaction as its cloud receipt.
+/// Local sale IDs are never accepted from the sender; each is resolved by cloud ID.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_waiter_settlement(
+    tx: &rusqlite::Transaction<'_>,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote waiter settlement".into());
+    let waiter_cloud_id = payload.get("waiter_entity_id").and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty()).ok_or_else(invalid)?;
+    let waiter_id = crate::database::entity_ids::lookup(tx, "waiters", waiter_cloud_id)?
+        .ok_or_else(|| AppError::Validation("unknown waiter identity in settlement".into()))?;
+    let ids = payload.get("sale_entity_ids").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let snapshots: Vec<Sale> = serde_json::from_value(
+        payload.get("settled_sales").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    if ids.is_empty() || ids.len() != snapshots.len() { return Err(invalid()); }
+    let mut seen = std::collections::HashSet::new();
+    let mut resolved = Vec::with_capacity(ids.len());
+    for (cloud_id, snapshot) in ids.iter().zip(&snapshots) {
+        let cloud_id = cloud_id.as_str().filter(|v| !v.trim().is_empty()).ok_or_else(invalid)?;
+        if !seen.insert(cloud_id) || !snapshot.is_settled
+            || snapshot.settled_at.as_deref().unwrap_or("").is_empty() {
+            return Err(invalid());
+        }
+        let local_id = crate::database::entity_ids::lookup(tx, "sales", cloud_id)?
+            .ok_or_else(|| AppError::Validation("unknown sale identity in settlement".into()))?;
+        let current = tx.query_row("SELECT * FROM sales WHERE id=?1", [local_id], Sale::from_row)?;
+        if current.waiter_id != waiter_id || current.is_settled
+            || current.total_quantity != snapshot.total_quantity
+            || !snapshot.total_amount.is_finite() || !snapshot.total_cost.is_finite()
+            || (current.total_amount - snapshot.total_amount).abs() > 0.01
+            || (current.total_cost - snapshot.total_cost).abs() > 0.01 {
+            return Err(invalid());
+        }
+        resolved.push((local_id, snapshot.settled_at.clone().ok_or_else(invalid)?));
+    }
+    for (id, settled_at) in resolved {
+        let changed = tx.execute(
+            "UPDATE sales SET is_settled=1, settled_at=?1 WHERE id=?2 AND is_settled=0",
+            rusqlite::params![settled_at,id],
+        )?;
+        if changed != 1 { return Err(invalid()); }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod settlement_outbox_tests {
     use super::*;
@@ -185,6 +232,38 @@ mod settlement_outbox_tests {
         assert_eq!(count, 1);
         let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(event["settled_sales"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn remote_settlement_is_atomic_and_rejects_duplicate_effects() {
+        let mut conn = db();
+        let waiter = create_waiter(&conn, "Mimi", None, None).unwrap();
+        pending_sale(&conn, waiter.id);
+        let sale_id = conn.last_insert_rowid();
+        let waiter_cloud: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters' AND local_id=?1",
+            [waiter.id], |r| r.get(0),
+        ).unwrap();
+        crate::database::entity_ids::register(&conn,"sales","remote:sale",sale_id).unwrap();
+        let mut sale = conn.query_row("SELECT * FROM sales WHERE id=?1",[sale_id],Sale::from_row).unwrap();
+        sale.is_settled=true;
+        sale.settled_at=Some("2026-02-01 10:00:00".into());
+        let payload=serde_json::json!({
+            "waiter_entity_id":waiter_cloud,
+            "sale_entity_ids":["remote:sale"],
+            "settled_sales":[sale]
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-settlement",1)],
+            |tx,_,_|apply_remote_waiter_settlement(tx,&payload),
+        ).unwrap();
+        assert_eq!(conn.query_row("SELECT is_settled FROM sales WHERE id=?1",
+            [sale_id],|r|r.get::<_,i64>(0)).unwrap(),1);
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("second-settlement",2)],
+            |tx,_,_|apply_remote_waiter_settlement(tx,&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
