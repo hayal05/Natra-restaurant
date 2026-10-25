@@ -194,6 +194,76 @@ mod tests {
     }
 
     #[test]
+    fn oversized_remote_sale_quantities_cannot_overflow_or_advance_cursor() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let waiter = DownloadedEvent {
+            entity_type:"waiters".into(),entity_id:"remote:overflow-waiter".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"waiter":{
+                "id":71,"full_name":"Overflow Test","phone":null,"profile_photo":null,
+                "is_active":true,"created_at":"2025-01-01 00:00:00",
+                "updated_at":"2025-01-01 00:00:00"}}),
+        };
+        let category = DownloadedEvent {
+            entity_type:"categories".into(),entity_id:"remote:overflow-category".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"name":"Overflow Category","description":null}),
+        };
+        let item = DownloadedEvent {
+            entity_type:"items".into(),entity_id:"remote:overflow-item".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "category_entity_id":"remote:overflow-category",
+                "item":{"id":88,"category_id":88,"name":"Test Item",
+                    "type":"ready_made","purchase_cost":0.0,"selling_price":0.0,
+                    "is_active":true,"created_at":"2025-01-01 00:00:00",
+                    "updated_at":"2025-01-01 00:00:00"}
+            }),
+        };
+        let dependencies=[&waiter,&category,&item];
+        connection::apply_cloud_event_batch(
+            &mut conn,&[("overflow-waiter",1),("overflow-cat",2),("overflow-item",3)],
+            |tx,_,seq|dispatch(tx,dependencies[(seq-1) as usize]),
+        ).unwrap();
+        let huge = i64::MAX;
+        let sale = DownloadedEvent {
+            entity_type:"sales".into(),entity_id:"remote:overflow-sale".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "origin_installation_id":"remote",
+                "waiter_entity_id":"remote:overflow-waiter",
+                "item_entity_ids":["remote:overflow-item","remote:overflow-item"],
+                "sale":{"id":99,"waiter_id":71,"user_id":null,
+                    "total_quantity":huge,"total_amount":0.0,"total_cost":0.0,
+                    "total_profit":0.0,"payment_method":"cash","is_settled":false,
+                    "settled_at":null,"is_reversed":false,"reversed_at":null,"note":null,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"},
+                "items":[
+                    {"id":1,"sale_id":99,"item_id":88,"item_name":"Test Item",
+                        "item_type":"ready_made","quantity":huge,"unit_price":0.0,
+                        "unit_cost":0.0,"line_total":0.0,"line_cost":0.0,
+                        "created_at":"2025-01-01 00:00:00"},
+                    {"id":2,"sale_id":99,"item_id":88,"item_name":"Test Item",
+                        "item_type":"ready_made","quantity":1,"unit_price":0.0,
+                        "unit_cost":0.0,"line_total":0.0,"line_cost":0.0,
+                        "created_at":"2025-01-01 00:00:00"}]
+            }),
+        };
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("overflow-sale-event",4)],|tx,_,_|dispatch(tx,&sale)
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+        assert!(!connection::is_cloud_event_applied(&conn,"overflow-sale-event").unwrap());
+        assert_eq!(crate::database::entity_ids::lookup(
+            &conn,"sales","remote:overflow-sale").unwrap(),None);
+        assert_eq!(conn.query_row(
+            "SELECT COUNT(*) FROM sales",[],|r|r.get::<_,i64>(0)
+        ).unwrap(),0);
+    }
+
+    #[test]
     fn negative_remote_sale_values_roll_back_with_cloud_receipt() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
