@@ -167,9 +167,9 @@ pub(crate) fn apply_remote_item(
         || item.purchase_cost.is_some_and(|cost| !cost.is_finite()) {
         return Err(invalid());
     }
-    if crate::database::entity_ids::lookup(tx, "items", entity_id)?.is_some() {
-        return Err(AppError::Validation("menu item identity already imported".into()));
-    }
+    // The cloud sequence controls replay order; mapped catalog identities
+    // may receive subsequent price, activation, and category changes.
+    let existing_id = crate::database::entity_ids::lookup(tx, "items", entity_id)?;
     let category_id = match payload.get("category_entity_id") {
         None | Some(serde_json::Value::Null) if item.category_id.is_none() => None,
         Some(serde_json::Value::String(cloud_id)) if item.category_id.is_some() => {
@@ -178,13 +178,24 @@ pub(crate) fn apply_remote_item(
         },
         _ => return Err(invalid()),
     };
-    tx.execute(
-        "INSERT INTO items(category_id,name,type,purchase_cost,selling_price,is_active,
-         created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-        rusqlite::params![category_id,item.name,item.item_type,item.purchase_cost,
-            item.selling_price,item.is_active,item.created_at,item.updated_at],
-    )?;
-    crate::database::entity_ids::register(tx, "items", entity_id, tx.last_insert_rowid())?;
+    if let Some(local_id) = existing_id {
+        // Never replace local SQLite identity or historical transaction lines.
+        let changed = tx.execute(
+            "UPDATE items SET category_id=?1,name=?2,type=?3,purchase_cost=?4,
+             selling_price=?5,is_active=?6,updated_at=?7 WHERE id=?8",
+            rusqlite::params![category_id,item.name,item.item_type,item.purchase_cost,
+                item.selling_price,item.is_active,item.updated_at,local_id],
+        )?;
+        if changed != 1 { return Err(invalid()); }
+    } else {
+        tx.execute(
+            "INSERT INTO items(category_id,name,type,purchase_cost,selling_price,is_active,
+             created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![category_id,item.name,item.item_type,item.purchase_cost,
+                item.selling_price,item.is_active,item.created_at,item.updated_at],
+        )?;
+        crate::database::entity_ids::register(tx, "items", entity_id, tx.last_insert_rowid())?;
+    }
     Ok(())
 }
 
@@ -323,7 +334,36 @@ mod tests {
     }
 
     #[test]
-    fn remote_menu_item_resolves_category_and_blocks_duplicate_import() {
+    fn remote_item_revision_reuses_local_row_and_changes_price() {
+        let mut conn = db();
+        let original = create_item(&conn, NewItem {
+            category_id: None, name: "Imported tea".into(),
+            item_type: ItemType::ReadyMade,
+            purchase_cost: Some(2.0), selling_price: 5.0,
+        }).unwrap();
+        let cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='items' AND local_id=?1",
+            [original.id], |r| r.get(0),
+        ).unwrap();
+        let mut changed = serde_json::to_value(original.clone()).unwrap();
+        changed["selling_price"] = serde_json::json!(7.0);
+        changed["is_active"] = serde_json::json!(false);
+        let payload = serde_json::json!({"item": changed, "category_entity_id": null});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn, &[("remote-item-update",1)],
+            |tx,_,_| apply_remote_item(tx, &cloud_id, &payload),
+        ).unwrap();
+        let (price, active): (f64, bool) = conn.query_row(
+            "SELECT selling_price,is_active FROM items WHERE id=?1", [original.id],
+            |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(price, 7.0);
+        assert!(!active);
+        assert_eq!(crate::database::entity_ids::lookup(&conn, "items", &cloud_id).unwrap(), Some(original.id));
+    }
+
+    #[test]
+    fn remote_menu_item_resolves_category_and_replays_updates() {
         let mut conn = db();
         let category = create_category(&conn,"Drinks",None).unwrap();
         let cloud_category: String = conn.query_row(
@@ -345,11 +385,13 @@ mod tests {
             "SELECT category_id FROM items WHERE id=?1",[local],|r|r.get(0)
         ).unwrap();
         assert_eq!(mapped_category,category.id);
-        assert!(crate::database::connection::apply_cloud_event_batch(
+        crate::database::connection::apply_cloud_event_batch(
             &mut conn,&[("remote-item-2",2)],
             |tx,_,_|apply_remote_item(tx,"other-device:item",&payload),
-        ).is_err());
-        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        ).unwrap();
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(count,2);
     }
 
     #[test]
