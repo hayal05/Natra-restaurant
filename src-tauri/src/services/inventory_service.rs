@@ -42,6 +42,33 @@ pub fn create_category(conn: &Connection, name: &str, description: Option<&str>)
     Ok(category)
 }
 
+/// Import a category by cloud identity inside the caller's cloud batch
+/// transaction. Remote SQLite row IDs must never be used locally.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_category(
+    tx: &rusqlite::Transaction<'_>,
+    entity_id: &str,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote category".into());
+    let name = payload.get("name").and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty()).ok_or_else(invalid)?;
+    let description = match payload.get("description") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(value.as_str().ok_or_else(invalid)?),
+    };
+    if entity_id.trim().is_empty() { return Err(invalid()); }
+    if crate::database::entity_ids::lookup(tx, "categories", entity_id)?.is_some() {
+        return Err(AppError::Validation("category identity already imported".into()));
+    }
+    tx.execute(
+        "INSERT INTO categories(name,description) VALUES(?1,?2)",
+        rusqlite::params![name,description],
+    )?;
+    crate::database::entity_ids::register(tx, "categories", entity_id, tx.last_insert_rowid())?;
+    Ok(())
+}
+
 pub fn list_categories(conn: &Connection) -> AppResult<Vec<Category>> {
     let mut stmt = conn.prepare("SELECT * FROM categories ORDER BY name")?;
     let rows = stmt.query_map([], Category::from_row)?;
@@ -236,6 +263,27 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         migrations::run(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn remote_category_uses_own_local_id_and_rejects_duplicate() {
+        let mut conn = db();
+        let payload = serde_json::json!({
+            "origin_installation_id":"other","local_id":999,
+            "name":"Imported soups","description":"Lunch"
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-category-1",1)],
+            |tx,_,_| apply_remote_category(tx,"other:999",&payload),
+        ).unwrap();
+        let local = crate::database::entity_ids::lookup(&conn,"categories","other:999")
+            .unwrap().unwrap();
+        assert_ne!(local,999);
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-category-2",2)],
+            |tx,_,_| apply_remote_category(tx,"other:999",&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
