@@ -214,6 +214,7 @@ pub(crate) fn apply_remote_sale(
     if entity_id.trim().is_empty() || origin.trim().is_empty()
         || lines.is_empty() || lines.len() != item_cloud_ids.len()
         || sale.is_settled || sale.is_reversed
+        || sale.total_amount < 0.0 || sale.total_cost < 0.0
         || ![sale.total_amount, sale.total_cost, sale.total_profit].iter().all(|x| x.is_finite())
         || crate::database::entity_ids::lookup(tx, "sales", entity_id)?.is_some()
     {
@@ -227,6 +228,8 @@ pub(crate) fn apply_remote_sale(
         let item_id = crate::database::entity_ids::lookup(tx, "items", cloud_id)?
             .ok_or_else(|| AppError::Validation("missing mapped item for remote sale".into()))?;
         if line.quantity <= 0 || line.sale_id != sale.id
+            || line.unit_price < 0.0 || line.line_total < 0.0 || line.line_cost < 0.0
+            || line.unit_cost.is_some_and(|v| v < 0.0)
             || ![line.unit_price, line.line_total, line.line_cost].iter().all(|x| x.is_finite())
             || line.unit_cost.is_some_and(|v| !v.is_finite())
             || (line.line_total - line.unit_price * line.quantity as f64).abs() > 0.01
