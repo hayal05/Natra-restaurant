@@ -34,6 +34,32 @@ pub fn create_raw_material(conn: &Connection, name: &str, unit: &str) -> AppResu
     Ok(material)
 }
 
+/// Import a catalog material by its immutable cloud identity.
+/// Existing mapped rows are never overwritten by an unrelated event.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_raw_material(
+    tx: &rusqlite::Transaction<'_>, entity_id: &str, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote raw material".into());
+    let material: RawMaterial = serde_json::from_value(
+        payload.get("material").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    if entity_id.trim().is_empty() || material.name.trim().is_empty() || material.unit.trim().is_empty() {
+        return Err(invalid());
+    }
+    if crate::database::entity_ids::lookup(tx, "raw_materials", entity_id)?.is_some() {
+        return Err(AppError::Validation("raw material identity already imported".into()));
+    }
+    tx.execute(
+        "INSERT INTO raw_materials(name,unit,is_active,created_at,updated_at)
+         VALUES(?1,?2,?3,?4,?5)",
+        rusqlite::params![material.name,material.unit,material.is_active,
+            material.created_at,material.updated_at],
+    )?;
+    crate::database::entity_ids::register(tx, "raw_materials", entity_id, tx.last_insert_rowid())?;
+    Ok(())
+}
+
 pub fn list_raw_materials(conn: &Connection, only_active: bool) -> AppResult<Vec<RawMaterial>> {
     let sql = if only_active {
         "SELECT * FROM raw_materials WHERE is_active = 1 ORDER BY name"
@@ -187,6 +213,27 @@ mod tests {
 
         record_purchase(&conn, chicken.id, 5.0, 3.0, None, None).unwrap();
         assert_eq!(total_cost(&conn, None, None).unwrap(), 21.0);
+    }
+
+    #[test]
+    fn remote_material_import_maps_identity_and_rejects_duplicates() {
+        let mut conn = db();
+        let payload = serde_json::json!({"material":{
+            "id":99,"name":"Imported Rice","unit":"kg","is_active":true,
+            "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"
+        }});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-material-event",1)],
+            |tx,_,_|apply_remote_raw_material(tx,"other:99",&payload),
+        ).unwrap();
+        let local_id = crate::database::entity_ids::lookup(&conn,"raw_materials","other:99")
+            .unwrap().unwrap();
+        assert_ne!(local_id,99);
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-material-event",2)],
+            |tx,_,_|apply_remote_raw_material(tx,"other:99",&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
