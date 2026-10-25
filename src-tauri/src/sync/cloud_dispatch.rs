@@ -267,6 +267,18 @@ mod tests {
             [],|r|r.get::<_,f64>(0),
         ).unwrap(),12.0);
 
+        // A distinct cloud receipt cannot import the same expense twice.
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-expense-receipt",4)],
+            |tx,_,_|dispatch(tx,&expense),
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+        assert!(!connection::is_cloud_event_applied(
+            &conn,"duplicate-expense-receipt").unwrap());
+        assert_eq!(conn.query_row(
+            "SELECT SUM(amount) FROM expenses",[],|r|r.get::<_,f64>(0),
+        ).unwrap(),25.0);
+
         let bad_purchase = DownloadedEvent {
             entity_type:"raw_material_purchases".into(),entity_id:"device-c:purchase".into(),
             operation:"upsert".into(),
