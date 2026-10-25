@@ -69,6 +69,84 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn downloaded_sale_maps_waiter_and_item_and_keeps_financial_totals() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let category = DownloadedEvent {
+            entity_type:"categories".into(), entity_id:"other:category".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"name":"Imported Drinks","description":null}),
+        };
+        let item = DownloadedEvent {
+            entity_type:"items".into(),entity_id:"other:item".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "category_entity_id":"other:category",
+                "item":{"id":51,"category_id":51,"name":"Tea",
+                    "type":"ready_made","purchase_cost":2.0,"selling_price":5.0,
+                    "is_active":true,"created_at":"2025-01-01 00:00:00",
+                    "updated_at":"2025-01-01 00:00:00"}
+            }),
+        };
+        let waiter = DownloadedEvent {
+            entity_type:"waiters".into(),entity_id:"other:waiter".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"waiter":{
+                "id":71,"full_name":"Imported Waiter","phone":null,
+                "profile_photo":null,"is_active":true,
+                "created_at":"2025-01-01 00:00:00",
+                "updated_at":"2025-01-01 00:00:00"
+            }}),
+        };
+        let sale = DownloadedEvent {
+            entity_type:"sales".into(),entity_id:"other:sale".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "origin_installation_id":"other",
+                "waiter_entity_id":"other:waiter",
+                "item_entity_ids":["other:item"],
+                "sale":{"id":93,"waiter_id":71,"user_id":null,
+                    "total_quantity":2,"total_amount":10.0,
+                    "total_cost":4.0,"total_profit":6.0,
+                    "payment_method":"cash","is_settled":false,"settled_at":null,
+                    "is_reversed":false,"reversed_at":null,"note":null,
+                    "created_at":"2025-01-01 00:00:00",
+                    "updated_at":"2025-01-01 00:00:00"},
+                "items":[{"id":94,"sale_id":93,"item_id":51,
+                    "item_name":"Tea","item_type":"ready_made","quantity":2,
+                    "unit_price":5.0,"unit_cost":2.0,
+                    "line_total":10.0,"line_cost":4.0,
+                    "created_at":"2025-01-01 00:00:00"}]
+            }),
+        };
+        let events=[&category,&item,&waiter,&sale];
+        connection::apply_cloud_event_batch(
+            &mut conn,
+            &[("remote-cat",1),("remote-item",2),("remote-waiter",3),("remote-sale",4)],
+            |tx,_,seq|dispatch(tx,events[(seq-1) as usize]),
+        ).unwrap();
+        let waiter_id = crate::database::entity_ids::lookup(
+            &conn,"waiters","other:waiter").unwrap().unwrap();
+        let item_id = crate::database::entity_ids::lookup(
+            &conn,"items","other:item").unwrap().unwrap();
+        let sale_id = crate::database::entity_ids::lookup(
+            &conn,"sales","other:sale").unwrap().unwrap();
+        let (linked_waiter,total,profit):(i64,f64,f64)=conn.query_row(
+            "SELECT waiter_id,total_amount,total_profit FROM sales WHERE id=?1",
+            [sale_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        ).unwrap();
+        assert_eq!((linked_waiter,total,profit),(waiter_id,10.0,6.0));
+        let (linked_item,qty,line_total):(i64,i64,f64)=conn.query_row(
+            "SELECT item_id,quantity,line_total FROM sale_items WHERE sale_id=?1",
+            [sale_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        ).unwrap();
+        assert_eq!((linked_item,qty,line_total),(item_id,2,10.0));
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),4);
+        assert!(connection::is_cloud_event_applied(&conn,"remote-sale").unwrap());
+    }
+
+    #[test]
     fn downloaded_sale_requires_mapped_waiter_and_items_and_rolls_back() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
