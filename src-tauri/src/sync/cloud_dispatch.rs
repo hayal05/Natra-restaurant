@@ -81,6 +81,68 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn reject_duplicate_cloud_sale_line_identity_without_advancing_cursor() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let waiter = DownloadedEvent {
+            entity_type:"waiters".into(),entity_id:"remote:line-waiter".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"waiter":{
+                "id":9,"full_name":"Line Waiter","phone":null,"profile_photo":null,
+                "is_active":true,"created_at":"2025-01-01 00:00:00",
+                "updated_at":"2025-01-01 00:00:00"}}),
+        };
+        let category=DownloadedEvent {
+            entity_type:"categories".into(),entity_id:"remote:line-cat".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"name":"Line Category","description":null}),
+        };
+        let item=DownloadedEvent {
+            entity_type:"items".into(),entity_id:"remote:line-item".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "category_entity_id":"remote:line-cat",
+                "item":{"id":8,"category_id":8,"name":"Tea","type":"ready_made",
+                    "purchase_cost":1.0,"selling_price":2.0,"is_active":true,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"}
+            }),
+        };
+        let deps=[&waiter,&category,&item];
+        connection::apply_cloud_event_batch(
+            &mut conn,&[("line-waiter",1),("line-cat",2),("line-item",3)],
+            |tx,_,seq|dispatch(tx,deps[(seq-1) as usize]),
+        ).unwrap();
+        let line=serde_json::json!({
+            "id":10,"sale_id":77,"item_id":8,"item_name":"Tea",
+            "item_type":"ready_made","quantity":1,"unit_price":2.0,
+            "unit_cost":1.0,"line_total":2.0,"line_cost":1.0,
+            "created_at":"2025-01-01 00:00:00"
+        });
+        let event=DownloadedEvent {
+            entity_type:"sales".into(),entity_id:"remote:duplicate-lines".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "origin_installation_id":"remote","waiter_entity_id":"remote:line-waiter",
+                "item_entity_ids":["remote:line-item","remote:line-item"],
+                "sale":{"id":77,"waiter_id":9,"user_id":null,"total_quantity":2,
+                    "total_amount":4.0,"total_cost":2.0,"total_profit":2.0,
+                    "payment_method":"cash","is_settled":false,"settled_at":null,
+                    "is_reversed":false,"reversed_at":null,"note":null,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"},
+                "items":[line.clone(),line]
+            }),
+        };
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-line-event",4)],|tx,_,_|dispatch(tx,&event)
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+        assert!(!connection::is_cloud_event_applied(&conn,"duplicate-line-event").unwrap());
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sales",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sale_items",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[test]
     fn financial_updates_reject_mismatched_cloud_target_before_mutation() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
