@@ -69,6 +69,67 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn linked_category_and_item_commit_together_or_roll_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let category = DownloadedEvent {
+            entity_type:"categories".into(),entity_id:"device-b:category".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"name":"Snacks","description":null}),
+        };
+        let item = DownloadedEvent {
+            entity_type:"items".into(),entity_id:"device-b:item".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "category_entity_id":"device-b:category",
+                "item":{"id":99,"category_id":99,"name":"Biscuit","type":"ready_made",
+                    "purchase_cost":2.0,"selling_price":5.0,"is_active":true,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"}
+            }),
+        };
+        let events = [&category,&item];
+        connection::apply_cloud_event_batch(
+            &mut conn,&[("category-event",1),("item-event",2)],
+            |tx,_,seq|dispatch(tx,events[(seq-1) as usize]),
+        ).unwrap();
+        let category_id = crate::database::entity_ids::lookup(
+            &conn,"categories","device-b:category").unwrap().unwrap();
+        let item_id = crate::database::entity_ids::lookup(
+            &conn,"items","device-b:item").unwrap().unwrap();
+        let linked: i64 = conn.query_row(
+            "SELECT category_id FROM items WHERE id=?1",[item_id],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(linked,category_id);
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+
+        let another_category = DownloadedEvent {
+            entity_type:"categories".into(),entity_id:"device-c:category".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"name":"Other","description":null}),
+        };
+        let invalid_item = DownloadedEvent {
+            entity_type:"items".into(),entity_id:"device-c:item".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "category_entity_id":"missing:category",
+                "item":{"id":5,"category_id":5,"name":"Failed","type":"ready_made",
+                    "purchase_cost":1.0,"selling_price":3.0,"is_active":true,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"}
+            }),
+        };
+        let failed = [&another_category,&invalid_item];
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("category-event-3",3),("item-event-4",4)],
+            |tx,_,seq|dispatch(tx,failed[(seq-3) as usize]),
+        ).is_err());
+        assert_eq!(crate::database::entity_ids::lookup(
+            &conn,"categories","device-c:category").unwrap(),None);
+        assert!(!connection::is_cloud_event_applied(&conn,"category-event-3").unwrap());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+    }
+
+    #[test]
     fn dispatch_categories_in_batch_and_reject_unknown_events_atomically() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
