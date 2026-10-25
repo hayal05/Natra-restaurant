@@ -211,7 +211,7 @@ pub(crate) fn apply_remote_sale(
         .ok_or_else(invalid)?;
     let origin = payload.get("origin_installation_id").and_then(|v| v.as_str())
         .ok_or_else(invalid)?;
-    if entity_id.trim().is_empty() || origin.trim().is_empty()
+    if entity_id.trim().is_empty() || origin.trim().is_empty() || sale.id <= 0
         || lines.is_empty() || lines.len() != item_cloud_ids.len()
         || sale.is_settled || sale.is_reversed
         || sale.total_amount < 0.0 || sale.total_cost < 0.0
@@ -225,7 +225,7 @@ pub(crate) fn apply_remote_sale(
     let mut mapped_items = Vec::with_capacity(lines.len());
     let mut seen_line_ids = std::collections::HashSet::new();
     for (line, cloud_id) in lines.iter().zip(item_cloud_ids) {
-        if !seen_line_ids.insert(line.id) {
+        if line.id <= 0 || !seen_line_ids.insert(line.id) {
             return Err(invalid());
         }
         let cloud_id = cloud_id.as_str().ok_or_else(invalid)?;
