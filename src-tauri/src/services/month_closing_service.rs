@@ -449,6 +449,42 @@ pub fn reopen_month(conn: &mut Connection, month: &str, reason: &str) -> AppResu
     })
 }
 
+/// Replay a remote reopen after its original close, preserving the audit
+/// reason and refusing to invalidate carry-forward into a later month.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_closing_reopen(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote closing reopen".into());
+    if payload.get("action").and_then(|v| v.as_str()) != Some("reopen") {
+        return Err(invalid());
+    }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    if closing.get("status").and_then(|v| v.as_str()) != Some("draft") {
+        return Err(invalid());
+    }
+    let reason = payload.get("reason").and_then(|v| v.as_str()).ok_or_else(invalid)?.trim();
+    if reason.len() < 5 { return Err(invalid()); }
+    let (id, status) = existing_closing(tx, month)?
+        .ok_or_else(|| AppError::Validation("closing to reopen does not exist".into()))?;
+    if status != "closed" || latest_closing(tx)?.map(|(m,_)| m) != Some(month.to_string()) {
+        return Err(AppError::Validation("reopen must target latest closed month".into()));
+    }
+    tx.execute(
+        "INSERT INTO raw_material_closing_audit(closing_id,action,reason) VALUES(?1,'reopen',?2)",
+        params![id,reason],
+    )?;
+    let changed = tx.execute(
+        "UPDATE raw_material_month_closings SET status='draft',closed_at=NULL,
+         updated_at=datetime('now') WHERE id=?1 AND status='closed'",
+        [id],
+    )?;
+    if changed != 1 { return Err(invalid()); }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,6 +528,37 @@ mod tests {
         assert_eq!(b.purchased_value,2500.0);
         assert_eq!(b.weighted_unit_cost,400.0);
         assert_eq!(value_remaining(&b,4.0).unwrap().consumed_value,2400.0);
+    }
+
+    #[test]
+    fn remote_reopen_preserves_audit_and_rejects_duplicate() {
+        let mut conn = db();
+        conn.execute(
+            "INSERT INTO raw_material_month_closings(period_month,status,closed_at)
+             VALUES('2025-01-01','closed',datetime('now'))", [],
+        ).unwrap();
+        let payload = serde_json::json!({
+            "action":"reopen","reason":"Correct stock count",
+            "closing":{"month":"2025-01-01","status":"draft"}
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-reopen",1)],
+            |tx,_,_|apply_remote_closing_reopen(tx,&payload),
+        ).unwrap();
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-01-01'",
+            [],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(status,"draft");
+        let reason: String = conn.query_row(
+            "SELECT reason FROM raw_material_closing_audit",[],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(reason,"Correct stock count");
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("reopen-again",2)],
+            |tx,_,_|apply_remote_closing_reopen(tx,&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
