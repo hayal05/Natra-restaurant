@@ -191,6 +191,84 @@ pub fn checkout(conn: &mut Connection, req: CheckoutRequest) -> AppResult<Checko
     })
 }
 
+/// Apply a downloaded sale and its immutable line snapshots inside the
+/// cloud batch transaction. The caller owns event receipt and cursor commits.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_sale(
+    tx: &rusqlite::Transaction<'_>,
+    entity_id: &str,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote sale payload".into());
+    let sale: Sale = serde_json::from_value(payload.get("sale").cloned().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    let lines: Vec<SaleItem> = serde_json::from_value(
+        payload.get("items").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    let waiter_cloud_id = payload.get("waiter_entity_id").and_then(|v| v.as_str())
+        .ok_or_else(invalid)?;
+    let item_cloud_ids = payload.get("item_entity_ids").and_then(|v| v.as_array())
+        .ok_or_else(invalid)?;
+    let origin = payload.get("origin_installation_id").and_then(|v| v.as_str())
+        .ok_or_else(invalid)?;
+    if entity_id.trim().is_empty() || origin.trim().is_empty()
+        || lines.is_empty() || lines.len() != item_cloud_ids.len()
+        || sale.is_settled || sale.is_reversed
+        || ![sale.total_amount, sale.total_cost, sale.total_profit].iter().all(|x| x.is_finite())
+        || crate::database::entity_ids::lookup(tx, "sales", entity_id)?.is_some()
+    {
+        return Err(invalid());
+    }
+    let waiter_id = crate::database::entity_ids::lookup(tx, "waiters", waiter_cloud_id)?
+        .ok_or_else(|| AppError::Validation("missing mapped waiter for remote sale".into()))?;
+    let mut mapped_items = Vec::with_capacity(lines.len());
+    for (line, cloud_id) in lines.iter().zip(item_cloud_ids) {
+        let cloud_id = cloud_id.as_str().ok_or_else(invalid)?;
+        let item_id = crate::database::entity_ids::lookup(tx, "items", cloud_id)?
+            .ok_or_else(|| AppError::Validation("missing mapped item for remote sale".into()))?;
+        if line.quantity <= 0 || line.sale_id != sale.id
+            || ![line.unit_price, line.line_total, line.line_cost].iter().all(|x| x.is_finite())
+            || line.unit_cost.is_some_and(|v| !v.is_finite())
+            || (line.line_total - line.unit_price * line.quantity as f64).abs() > 0.01
+            || (line.line_cost - line.unit_cost.unwrap_or(0.0) * line.quantity as f64).abs() > 0.01
+        {
+            return Err(invalid());
+        }
+        mapped_items.push(item_id);
+    }
+    let quantity: i64 = lines.iter().map(|l| l.quantity).sum();
+    let amount: f64 = lines.iter().map(|l| l.line_total).sum();
+    let cost: f64 = lines.iter().map(|l| l.line_cost).sum();
+    if sale.total_quantity != quantity || (sale.total_amount - amount).abs() > 0.01
+        || (sale.total_cost - cost).abs() > 0.01
+        || (sale.total_profit - (amount - cost)).abs() > 0.01
+    {
+        return Err(invalid());
+    }
+    tx.execute(
+        "INSERT INTO sales(waiter_id,user_id,total_quantity,total_amount,total_cost,total_profit,
+         payment_method,is_settled,settled_at,is_reversed,reversed_at,note,created_at,updated_at)
+         VALUES(?1,NULL,?2,?3,?4,?5,?6,0,NULL,0,NULL,?7,?8,?9)",
+        rusqlite::params![waiter_id,sale.total_quantity,sale.total_amount,sale.total_cost,
+            sale.total_profit,sale.payment_method,sale.note,sale.created_at,sale.updated_at],
+    )?;
+    let local_sale_id = tx.last_insert_rowid();
+    crate::database::entity_ids::register(tx, "sales", entity_id, local_sale_id)?;
+    for (line, local_item_id) in lines.iter().zip(mapped_items) {
+        tx.execute(
+            "INSERT INTO sale_items(sale_id,item_id,item_name,item_type,quantity,unit_price,
+             unit_cost,line_total,line_cost,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            rusqlite::params![local_sale_id, local_item_id, line.item_name, line.item_type,
+                line.quantity,line.unit_price,line.unit_cost,line.line_total,line.line_cost,line.created_at],
+        )?;
+        let local_line_id = tx.last_insert_rowid();
+        let line_entity_id = format!("{origin}:{}", line.id);
+        crate::database::entity_ids::register(tx, "sale_items", &line_entity_id, local_line_id)?;
+    }
+    Ok(())
+}
+
 /// List sales, optionally narrowed to a waiter and/or a `created_at` window.
 /// `from`/`to` are inclusive and expected in the same
 /// `"YYYY-MM-DD HH:MM:SS"` shape the rest of the app uses for date-range
@@ -291,6 +369,7 @@ pub fn reverse_sale(conn: &Connection, sale_id: i64) -> AppResult<Sale> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::connection::{apply_cloud_event_batch,read_cloud_pull_cursor};
     use crate::database::migrations;
     use crate::services::{inventory_service, waiter_service};
     use crate::services::inventory_service::NewItem;
@@ -407,6 +486,49 @@ mod tests {
             ).unwrap();
             assert_eq!(count, 0, "{table} should roll back");
         }
+    }
+
+    #[test]
+    fn downloaded_sale_keeps_financial_snapshots_and_is_atomic() {
+        let mut conn = db();
+        let waiter = waiter_service::create_waiter(&conn, "Alex", None, None).unwrap();
+        let item = inventory_service::create_item(&conn, NewItem {
+            category_id: None,name:"Tea".into(),item_type:ItemType::ReadyMade,
+            purchase_cost:Some(2.0),selling_price:5.0
+        }).unwrap();
+        let waiter_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='waiters'",
+            [], |r| r.get(0)).unwrap();
+        let item_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='items'",
+            [], |r| r.get(0)).unwrap();
+        let local = checkout(&mut conn, CheckoutRequest {
+            waiter_id:waiter.id,user_id:None,payment_method:PaymentMethod::Cash,
+            lines:vec![CartLine{item_id:item.id,quantity:2}],note:None
+        }).unwrap();
+        let payload = serde_json::json!({
+            "origin_installation_id":"remote-device",
+            "waiter_entity_id":waiter_id,
+            "item_entity_ids":[item_id],
+            "sale":local.sale,
+            "items":local.items
+        });
+        apply_cloud_event_batch(&mut conn, &[("remote-sale-event", 1)], |tx,_,_| {
+            apply_remote_sale(tx, "remote-device:5", &payload)
+        }).unwrap();
+        let remote_id = crate::database::entity_ids::lookup(&conn,"sales","remote-device:5")
+            .unwrap().unwrap();
+        let (amount, items): (f64, i64) = conn.query_row(
+            "SELECT total_amount,(SELECT COUNT(*) FROM sale_items WHERE sale_id=?1)
+             FROM sales WHERE id=?1",[remote_id],|r|Ok((r.get(0)?,r.get(1)?))
+        ).unwrap();
+        assert_eq!(amount,10.0);
+        assert_eq!(items,1);
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(),1);
+        assert!(apply_cloud_event_batch(&mut conn, &[("duplicate-new-event", 2)], |tx,_,_| {
+            apply_remote_sale(tx,"remote-device:5",&payload)
+        }).is_err());
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(),1);
     }
 
     #[test]
