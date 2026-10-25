@@ -69,6 +69,49 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn downloaded_sale_requires_mapped_waiter_and_items_and_rolls_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let waiter = DownloadedEvent {
+            entity_type:"waiters".into(),entity_id:"remote:waiter".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"waiter":{
+                "id":99,"full_name":"Remote Server","phone":null,"profile_photo":null,
+                "is_active":true,"created_at":"2025-01-01 00:00:00",
+                "updated_at":"2025-01-01 00:00:00"
+            }}),
+        };
+        let sale = DownloadedEvent {
+            entity_type:"sales".into(),entity_id:"remote:sale".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "origin_installation_id":"remote","waiter_entity_id":"remote:waiter",
+                "item_entity_ids":["missing:item"],
+                "sale":{"id":42,"waiter_id":99,"user_id":null,
+                    "total_quantity":1,"total_amount":5.0,"total_cost":2.0,
+                    "total_profit":3.0,"payment_method":"cash","is_settled":false,
+                    "settled_at":null,"is_reversed":false,"reversed_at":null,"note":null,
+                    "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"},
+                "items":[{"id":77,"sale_id":42,"item_id":99,"item_name":"Tea",
+                    "item_type":"ready_made","quantity":1,"unit_price":5.0,
+                    "unit_cost":2.0,"line_total":5.0,"line_cost":2.0,
+                    "created_at":"2025-01-01 00:00:00"}]
+            }),
+        };
+        let batch=[&waiter,&sale];
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-waiter-event",1),("remote-sale-event",2)],
+            |tx,_,seq|dispatch(tx,batch[(seq-1) as usize]),
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),0);
+        assert_eq!(crate::database::entity_ids::lookup(&conn,"waiters","remote:waiter").unwrap(),None);
+        assert!(!connection::is_cloud_event_applied(&conn,"remote-waiter-event").unwrap());
+        let sales:i64=conn.query_row("SELECT COUNT(*) FROM sales",[],|r|r.get(0)).unwrap();
+        assert_eq!(sales,0);
+    }
+
+    #[test]
     fn financial_purchase_and_expense_batch_commits_or_rolls_back_together() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
