@@ -97,6 +97,44 @@ pub fn record_purchase(
     Ok(purchase)
 }
 
+/// Insert a downloaded cost event in the caller's receipt/cursor transaction.
+/// Never trust the sender's SQLite ID or overwrite a mapped financial purchase.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_purchase(
+    tx: &rusqlite::Transaction<'_>,
+    entity_id: &str,
+    payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote material purchase".into());
+    let purchase: RawMaterialPurchase = serde_json::from_value(
+        payload.get("purchase").cloned().ok_or_else(invalid)?
+    ).map_err(|_| invalid())?;
+    let material_entity_id = payload.get("raw_material_entity_id")
+        .and_then(|v| v.as_str()).filter(|v| !v.trim().is_empty())
+        .ok_or_else(invalid)?;
+    if entity_id.trim().is_empty() || !purchase.quantity.is_finite()
+        || !purchase.unit_cost.is_finite() || !purchase.total_cost.is_finite() {
+        return Err(invalid());
+    }
+    purchase.validate()?;
+    if crate::database::entity_ids::lookup(tx, "raw_material_purchases", entity_id)?.is_some() {
+        return Err(AppError::Validation("purchase already exists; refusing cost duplication".into()));
+    }
+    let local_material_id = crate::database::entity_ids::lookup(tx, "raw_materials", material_entity_id)?
+        .ok_or_else(|| AppError::Validation("unknown raw material identity in purchase".into()))?;
+    tx.execute(
+        "INSERT INTO raw_material_purchases(raw_material_id,quantity,unit_cost,total_cost,
+         supplier,purchase_date,note,created_at,updated_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        rusqlite::params![local_material_id,purchase.quantity,purchase.unit_cost,
+            purchase.total_cost,purchase.supplier,purchase.purchase_date,purchase.note,
+            purchase.created_at,purchase.updated_at],
+    )?;
+    let local_id = tx.last_insert_rowid();
+    crate::database::entity_ids::register(tx, "raw_material_purchases", entity_id, local_id)?;
+    Ok(())
+}
+
 pub fn list_purchases(
     conn: &Connection,
     raw_material_id: Option<i64>,
@@ -167,6 +205,31 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(json["purchase"]["id"], purchase.id);
         assert_eq!(json["purchase"]["total_cost"], 20.0);
+    }
+
+    #[test]
+    fn downloaded_purchase_preserves_cost_and_prevents_duplicate_replay() {
+        let mut conn = db();
+        let material = create_raw_material(&conn, "Beans", "kg").unwrap();
+        let purchase = record_purchase(&conn, material.id, 2.0, 4.0, None, None).unwrap();
+        let material_cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials'",
+            [], |r| r.get(0),
+        ).unwrap();
+        let payload = serde_json::json!({
+            "raw_material_entity_id":material_cloud_id,"purchase":purchase
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("external-purchase-event",1)],
+            |tx,_,_| apply_remote_purchase(tx,"remote:purchase",&payload)
+        ).unwrap();
+        assert_eq!(total_cost(&conn,None,None).unwrap(),16.0);
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-purchase-event",2)],
+            |tx,_,_| apply_remote_purchase(tx,"remote:purchase",&payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        assert_eq!(total_cost(&conn,None,None).unwrap(),16.0);
     }
 
     #[test]
