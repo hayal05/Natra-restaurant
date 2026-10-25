@@ -69,6 +69,82 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn financial_purchase_and_expense_batch_commits_or_rolls_back_together() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let material = DownloadedEvent {
+            entity_type:"raw_materials".into(),entity_id:"device-b:material".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"material":{
+                "id":91,"name":"Imported Beans","unit":"kg","is_active":true,
+                "created_at":"2025-01-01 00:00:00","updated_at":"2025-01-01 00:00:00"
+            }}),
+        };
+        connection::apply_cloud_event_batch(
+            &mut conn,&[("material-event",1)],|tx,_,_|dispatch(tx,&material)
+        ).unwrap();
+        let purchase = DownloadedEvent {
+            entity_type:"raw_material_purchases".into(),entity_id:"device-b:purchase".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "raw_material_entity_id":"device-b:material",
+                "purchase":{"id":12,"raw_material_id":91,"quantity":3.0,
+                    "unit_cost":4.0,"total_cost":12.0,"supplier":null,
+                    "purchase_date":"2025-01-02 00:00:00","note":null,
+                    "created_at":"2025-01-02 00:00:00","updated_at":"2025-01-02 00:00:00"}
+            }),
+        };
+        let expense = DownloadedEvent {
+            entity_type:"expenses".into(),entity_id:"device-b:expense".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({"expense":{
+                "id":23,"category":"Rent","description":null,"amount":25.0,
+                "expense_date":"2025-01-02 00:00:00","note":null,
+                "created_at":"2025-01-02 00:00:00","updated_at":"2025-01-02 00:00:00"
+            }}),
+        };
+        let events = [&purchase,&expense];
+        connection::apply_cloud_event_batch(
+            &mut conn,&[("purchase-event",2),("expense-event",3)],
+            |tx,_,seq|dispatch(tx,events[(seq-2) as usize]),
+        ).unwrap();
+        let purchase_total: f64 = conn.query_row(
+            "SELECT SUM(total_cost) FROM raw_material_purchases",[],|r|r.get(0)
+        ).unwrap();
+        let expense_total: f64 = conn.query_row(
+            "SELECT SUM(amount) FROM expenses",[],|r|r.get(0)
+        ).unwrap();
+        assert_eq!((purchase_total,expense_total),(12.0,25.0));
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+
+        let bad_purchase = DownloadedEvent {
+            entity_type:"raw_material_purchases".into(),entity_id:"device-c:purchase".into(),
+            operation:"upsert".into(),
+            payload:serde_json::json!({
+                "raw_material_entity_id":"device-b:material",
+                "purchase":{"id":56,"raw_material_id":91,"quantity":2.0,
+                    "unit_cost":6.0,"total_cost":999.0,"supplier":null,
+                    "purchase_date":"2025-01-02 00:00:00","note":null,
+                    "created_at":"2025-01-02 00:00:00","updated_at":"2025-01-02 00:00:00"}
+            }),
+        };
+        let failed = [&expense,&bad_purchase];
+        assert!(connection::apply_cloud_event_batch(
+            &mut conn,&[("later-expense-event",4),("invalid-purchase-event",5)],
+            |tx,_,seq|dispatch(tx,failed[(seq-4) as usize]),
+        ).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),3);
+        assert!(!connection::is_cloud_event_applied(&conn,"later-expense-event").unwrap());
+        assert_eq!(conn.query_row(
+            "SELECT COUNT(*) FROM raw_material_purchases",[],|r|r.get::<_,i64>(0)
+        ).unwrap(),1);
+        assert_eq!(conn.query_row(
+            "SELECT COUNT(*) FROM expenses",[],|r|r.get::<_,i64>(0)
+        ).unwrap(),1);
+    }
+
+    #[test]
     fn linked_category_and_item_commit_together_or_roll_back() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
