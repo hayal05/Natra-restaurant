@@ -58,14 +58,20 @@ pub(crate) fn apply_remote_category(
         Some(value) => Some(value.as_str().ok_or_else(invalid)?),
     };
     if entity_id.trim().is_empty() { return Err(invalid()); }
-    if crate::database::entity_ids::lookup(tx, "categories", entity_id)?.is_some() {
-        return Err(AppError::Validation("category identity already imported".into()));
+    if let Some(local_id) = crate::database::entity_ids::lookup(tx, "categories", entity_id)? {
+        // Preserve the category ID referenced by existing menu items.
+        let changed = tx.execute(
+            "UPDATE categories SET name=?1,description=?2 WHERE id=?3",
+            rusqlite::params![name,description,local_id],
+        )?;
+        if changed != 1 { return Err(invalid()); }
+    } else {
+        tx.execute(
+            "INSERT INTO categories(name,description) VALUES(?1,?2)",
+            rusqlite::params![name,description],
+        )?;
+        crate::database::entity_ids::register(tx, "categories", entity_id, tx.last_insert_rowid())?;
     }
-    tx.execute(
-        "INSERT INTO categories(name,description) VALUES(?1,?2)",
-        rusqlite::params![name,description],
-    )?;
-    crate::database::entity_ids::register(tx, "categories", entity_id, tx.last_insert_rowid())?;
     Ok(())
 }
 
@@ -313,7 +319,32 @@ mod tests {
     }
 
     #[test]
-    fn remote_category_uses_own_local_id_and_rejects_duplicate() {
+    fn remote_category_revision_keeps_item_relationships() {
+        let mut conn = db();
+        let category = create_category(&conn,"Drinks",None).unwrap();
+        let item = create_item(&conn,NewItem {
+            category_id:Some(category.id),name:"Tea".into(),item_type:ItemType::ReadyMade,
+            purchase_cost:Some(1.0),selling_price:3.0,
+        }).unwrap();
+        let cloud_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='categories' AND local_id=?1",
+            [category.id],|r|r.get(0),
+        ).unwrap();
+        let payload = serde_json::json!({"name":"Hot Drinks","description":"Coffee and tea"});
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("category-update",1)],
+            |tx,_,_|apply_remote_category(tx,&cloud_id,&payload),
+        ).unwrap();
+        let (name,mapped_category):(String,i64) = conn.query_row(
+            "SELECT c.name,i.category_id FROM categories c JOIN items i ON i.category_id=c.id WHERE i.id=?1",
+            [item.id],|r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(name,"Hot Drinks");
+        assert_eq!(mapped_category,category.id);
+    }
+
+    #[test]
+    fn remote_category_uses_own_local_id_and_replays_updates() {
         let mut conn = db();
         let payload = serde_json::json!({
             "origin_installation_id":"other","local_id":999,
@@ -326,11 +357,13 @@ mod tests {
         let local = crate::database::entity_ids::lookup(&conn,"categories","other:999")
             .unwrap().unwrap();
         assert_ne!(local,999);
-        assert!(crate::database::connection::apply_cloud_event_batch(
+        crate::database::connection::apply_cloud_event_batch(
             &mut conn,&[("remote-category-2",2)],
             |tx,_,_| apply_remote_category(tx,"other:999",&payload),
-        ).is_err());
-        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        ).unwrap();
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM categories",[],|r|r.get(0)).unwrap();
+        assert_eq!(count,1);
     }
 
     #[test]
