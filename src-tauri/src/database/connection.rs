@@ -203,7 +203,17 @@ where
                 "event ID reused with a different cloud sequence".into(),
             ).into()),
             None => {
-                apply_business_event(&tx, event_id, sequence_id)?;
+                // An event uploaded by this installation already changed local
+                // business rows when it entered the outbox. A cloud echo must
+                // advance the pull cursor, never apply its financial effect again.
+                let originated_here: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM cloud_outbox WHERE event_id=?1)",
+                    [event_id],
+                    |row| row.get(0),
+                )?;
+                if !originated_here {
+                    apply_business_event(&tx, event_id, sequence_id)?;
+                }
                 record_cloud_applied_event(&tx, event_id, sequence_id)?;
             }
         }
@@ -395,6 +405,26 @@ mod tests {
         assert!(is_cloud_event_applied(&conn, "one").unwrap());
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM test_cloud_values", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn cloud_echo_of_own_outbox_event_never_reapplies_a_sale() {
+        let db = Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        conn.execute(
+            "INSERT INTO cloud_outbox(event_id,entity_type,entity_id,operation,payload)
+             VALUES ('locally-created-event','sales','install:1','upsert','{}')",
+            [],
+        ).unwrap();
+        let mut callbacks = 0;
+        apply_cloud_event_batch(
+            &mut conn, &[("locally-created-event", 10), ("remote-event", 11)],
+            |_, _, _| { callbacks += 1; Ok(()) },
+        ).unwrap();
+        assert_eq!(callbacks, 1, "only the remote financial event should be applied");
+        assert_eq!(read_cloud_pull_cursor(&conn).unwrap(), 11);
+        assert!(is_cloud_event_applied(&conn, "locally-created-event").unwrap());
+        assert!(is_cloud_event_applied(&conn, "remote-event").unwrap());
     }
 
     #[test]
