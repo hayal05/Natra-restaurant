@@ -14,6 +14,7 @@
 //! - `manager` ties the above into one push+pull cycle and the
 //!   manual user-initiated synchronization.
 
+pub(crate) mod cloud_dispatch;
 pub mod conflict;
 pub mod manager;
 pub mod queue;
