@@ -39,8 +39,12 @@ export async function handleSyncRequest(request, env = {}) {
   } catch {
     return json(401, "unauthorized");
   }
-  if (!identity || !identity.workspace_id || !identity.installation_id ||
-      identity.authorized !== true) {
+  // Cloud IDs are UUIDs, never arbitrary client-defined identifiers.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!identity || identity.authorized !== true ||
+      typeof identity.workspace_id !== "string" ||
+      typeof identity.installation_id !== "string" ||
+      !uuid.test(identity.workspace_id) || !uuid.test(identity.installation_id)) {
     return json(403, "forbidden");
   }
   // Deliberately do not route to Neon until authorized session, scope,
