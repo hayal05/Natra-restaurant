@@ -11,6 +11,19 @@ const json = (status, error) =>
 export async function handleSyncRequest(request, env = {}) {
   const path = new URL(request.url).pathname;
   if (!path.startsWith("/sync/")) return json(404, "not_found");
+  // Reserve only the intended upload/pull routes. Unknown routes may
+  // never inherit authorization and accidentally reach a future handler.
+  const supported = {
+    "/sync/upload": "POST",
+    "/sync/pull": "GET",
+  };
+  if (!Object.hasOwn(supported, path)) return json(404, "not_found");
+  if (request.method !== supported[path]) {
+    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
+      status: 405,
+      headers: { ...headers, allow: supported[path] },
+    });
+  }
   // No implicit authentication from an installation ID, workspace ID,
   // session cookie, or client-controlled headers.
   if (!env.SYNC_AUTH_VERIFIER) return json(503, "sync_not_configured");
