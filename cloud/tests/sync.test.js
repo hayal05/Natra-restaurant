@@ -305,3 +305,97 @@ test("configured API uses the real Neon driver with mocked HTTP transport", asyn
     neonConfig.fetchFunction = originalFetch;
   }
 });
+
+const {createJwtAuthVerifier, configuredAuthVerifier} = await import("../auth/jwt.js");
+const {SignJWT, generateKeyPair, exportJWK, createLocalJWKSet} = await import("jose");
+const jwtConfig = {issuer:"https://issuer.example.test/",audience:"natra-sync",jwksUrl:"https://issuer.example.test/keys"};
+const keyPair = await generateKeyPair("RS256");
+const publicJwk = {...await exportJWK(keyPair.publicKey),kid:"test-key",alg:"RS256",use:"sig"};
+const jwtClaims = {...sessionScope, scope:"natra:sync",sub:"test-subject",iss:jwtConfig.issuer,aud:jwtConfig.audience,
+  exp:Math.floor(Date.now()/1000)+300};
+const signToken = (claims = jwtClaims, key = keyPair.privateKey, header = {alg:"RS256",kid:"test-key"}) =>
+  new SignJWT(claims).setProtectedHeader(header).sign(key);
+const verifyJwt = createJwtAuthVerifier(jwtConfig,createLocalJWKSet({keys:[publicJwk]}));
+
+test("signed JWT identity reaches database validation but cannot enable sync", async () => {
+  let calls = 0;
+  const response = await worker.fetch(req("Bearer " + await signToken()),{
+    SYNC_AUTH_VERIFIER:verifyJwt,
+    SYNC_SESSION_VALIDATOR:async scope => {calls++; assert.deepEqual(scope,sessionScope);return true;},
+  });
+  assert.equal(response.status,501);
+  assert.equal(calls,1);
+});
+
+test("JWT verifier rejects expired, future, foreign and unscoped tokens", async () => {
+  for (const claims of [
+    {...jwtClaims,exp:0}, {...jwtClaims,nbf:jwtClaims.exp+60},
+    {...jwtClaims,iss:"https://attacker.example.test/"}, {...jwtClaims,aud:"another-app"},
+    {...jwtClaims,scope:"read"}, {...jwtClaims,scope:["natra:sync"]}, {...jwtClaims,sub:""},
+    ...["exp","sub","workspace_id","installation_id","session_id","scope"].map(name => {
+      const copy = {...jwtClaims}; delete copy[name]; return copy;
+    }),
+  ]) {
+    let calls = 0;
+    const response = await worker.fetch(req("Bearer " + await signToken(claims)),{
+      SYNC_AUTH_VERIFIER:verifyJwt,
+      SYNC_SESSION_VALIDATOR:async () => {calls++; return true;},
+    });
+    assert.equal(response.status,401);
+    assert.equal(calls,0);
+  }
+});
+
+test("JWT verifier rejects invalid signatures, unsigned and wrong-algorithm tokens", async () => {
+  const foreignPair = await generateKeyPair("RS256");
+  const valid = await signToken();
+  const parts = valid.split(".");
+  const tampered = [parts[0],Buffer.from(JSON.stringify({...jwtClaims,workspace_id:"44444444-4444-4444-8444-444444444444"})).toString("base64url"),parts[2]].join(".");
+  const unsigned = Buffer.from(JSON.stringify({alg:"none"})).toString("base64url") + "." + parts[1] + ".";
+  for (const token of [await signToken(jwtClaims,foreignPair.privateKey),tampered,unsigned,
+    await signToken(jwtClaims,new Uint8Array(32),{alg:"HS256"}), "not-a-jwt"]) {
+    await assert.rejects(() => verifyJwt(token));
+  }
+});
+
+test("JWT configuration rejects insecure URLs and missing values", () => {
+  for (const config of [
+    {}, {...jwtConfig,audience:""}, {...jwtConfig,issuer:"http://issuer.example.test/"},
+    {...jwtConfig,jwksUrl:"http://issuer.example.test/keys"},
+    {...jwtConfig,jwksUrl:"https://user:pass@issuer.example.test/keys"},
+    {...jwtConfig,jwksUrl:"https://issuer.example.test/keys#fragment"},
+  ]) assert.throws(() => createJwtAuthVerifier(config));
+  const env = {SYNC_JWT_ISSUER:jwtConfig.issuer,SYNC_JWT_AUDIENCE:jwtConfig.audience,SYNC_JWKS_URL:jwtConfig.jwksUrl};
+  assert.equal(configuredAuthVerifier(env),configuredAuthVerifier({...env}));
+  assert.equal(configuredAuthVerifier({...env,SYNC_AUTH_VERIFIER:null}),null);
+});
+
+test("configured verifier fetches only pinned JWKS and caches public keys", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async (url, options) => {
+    fetches++;
+    assert.equal(String(url),jwtConfig.jwksUrl);
+    assert.equal(options.redirect,"manual");
+    return new Response(JSON.stringify({keys:[publicJwk]}),{
+      status:200,headers:{"content-type":"application/json"},
+    });
+  };
+  try {
+    const token = await signToken(jwtClaims,keyPair.privateKey,{
+      alg:"RS256",kid:"test-key",jku:"https://attacker.example.test/keys",
+    });
+    for (let i = 0; i < 2; i++) {
+      const response = await worker.fetch(req("Bearer " + token),{
+        SYNC_JWT_ISSUER:jwtConfig.issuer,
+        SYNC_JWT_AUDIENCE:jwtConfig.audience,
+        SYNC_JWKS_URL:jwtConfig.jwksUrl,
+        SYNC_SESSION_VALIDATOR:async () => true,
+      });
+      assert.equal(response.status,501);
+    }
+    assert.equal(fetches,1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -1,3 +1,4 @@
+import { configuredAuthVerifier } from "../auth/jwt.js";
 import { createNeonSessionValidator } from "../db/neon-session.js";
 
 // Task 35: secure-by-default entry point for the future sync API.
@@ -28,7 +29,13 @@ export async function handleSyncRequest(request, env = {}) {
   }
   // No implicit authentication from an installation ID, workspace ID,
   // session cookie, or client-controlled headers.
-  if (typeof env.SYNC_AUTH_VERIFIER !== "function") return json(503, "sync_not_configured");
+  let verifyAuth;
+  try {
+    verifyAuth = configuredAuthVerifier(env);
+  } catch {
+    return json(503, "sync_not_configured");
+  }
+  if (typeof verifyAuth !== "function") return json(503, "sync_not_configured");
   const token = request.headers.get("authorization");
   if (!token || token.length > 8199 || !/^Bearer [^\s]+$/.test(token)) {
     return json(401, "unauthorized");
@@ -37,7 +44,7 @@ export async function handleSyncRequest(request, env = {}) {
   // workspace/installation permissions. It must not merely parse a JWT.
   let identity;
   try {
-    identity = await env.SYNC_AUTH_VERIFIER(token.slice(7));
+    identity = await verifyAuth(token.slice(7));
   } catch {
     return json(401, "unauthorized");
   }
