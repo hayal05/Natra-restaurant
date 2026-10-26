@@ -26,9 +26,9 @@ export async function handleSyncRequest(request, env = {}) {
   }
   // No implicit authentication from an installation ID, workspace ID,
   // session cookie, or client-controlled headers.
-  if (!env.SYNC_AUTH_VERIFIER) return json(503, "sync_not_configured");
+  if (typeof env.SYNC_AUTH_VERIFIER !== "function") return json(503, "sync_not_configured");
   const token = request.headers.get("authorization");
-  if (!token || !/^Bearer [^\s]+$/.test(token)) {
+  if (!token || token.length > 8199 || !/^Bearer [^\s]+$/.test(token)) {
     return json(401, "unauthorized");
   }
   // A deployment-supplied verifier must authenticate the caller and bind
