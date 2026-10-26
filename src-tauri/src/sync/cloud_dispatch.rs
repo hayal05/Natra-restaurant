@@ -111,6 +111,21 @@ pub(crate) fn acknowledge_uploads(
     Ok(())
 }
 
+/// Commit one completed, explicitly requested cloud exchange.
+/// Upload acknowledgements are durable even when pull replay subsequently
+/// fails: the acknowledged outbox records are safe to omit on retry, while
+/// the failed page leaves its business rows and cursor unchanged.
+#[allow(dead_code)]
+pub(crate) fn finish_manual_exchange(
+    conn: &mut rusqlite::Connection,
+    acknowledged_upload_ids: &[String],
+    downloaded_page: &[SequencedDownload],
+) -> AppResult<(usize, usize)> {
+    acknowledge_uploads(conn, acknowledged_upload_ids)?;
+    let applied = apply_download_page(conn, downloaded_page)?;
+    Ok((acknowledged_upload_ids.len(), applied))
+}
+
 /// Reject unsupported events rather than advancing the cursor without applying them.
 #[allow(dead_code)]
 pub(crate) fn dispatch(tx: &Transaction<'_>, event: &DownloadedEvent) -> AppResult<()> {
@@ -667,6 +682,32 @@ mod tests {
             &conn,"categories","device-c:category").unwrap(),None);
         assert!(!connection::is_cloud_event_applied(&conn,"category-event-3").unwrap());
         assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+    }
+
+    #[test]
+    fn task34_failed_download_keeps_accepted_upload_receipts_for_retry() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::run(&conn).unwrap();
+        let id = {
+            let tx = conn.transaction().unwrap();
+            let id = crate::sync::queue::enqueue_cloud_event(
+                &tx,"categories","local:27","upsert",
+                &serde_json::json!({"name":"Local"}),
+            ).unwrap();
+            tx.commit().unwrap();
+            id
+        };
+        let unsupported=SequencedDownload {
+            event_id:"remote-bad".into(),sequence_id:1,
+            event:DownloadedEvent {
+                entity_type:"unknown".into(),entity_id:"remote:5".into(),
+                operation:"upsert".into(),payload:serde_json::json!({}),
+            },
+        };
+        assert!(finish_manual_exchange(&mut conn,&[id],&[unsupported]).is_err());
+        assert!(read_pending_uploads(&conn,10).unwrap().is_empty());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),0);
+        assert!(!connection::is_cloud_event_applied(&conn,"remote-bad").unwrap());
     }
 
     #[test]
