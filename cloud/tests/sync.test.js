@@ -270,7 +270,10 @@ test("invalid Neon settings are rejected before transport is constructed", async
 test("Neon validation query preserves canonical scope and lifecycle checks", async () => {
   const {readFile} = await import("node:fs/promises");
   const source = await readFile(new URL("../queries/validate_sync_session.sql",import.meta.url),"utf8");
-  assert.equal(VALIDATE_SESSION_SQL,source.slice(source.indexOf("SELECT ")).trim());
+  const normalize = sql => sql.replace(/\r\n/g,"\n").trim();
+  for (const text of [source, source.replace(/\r?\n/g,"\r\n")]) {
+    assert.equal(normalize(VALIDATE_SESSION_SQL),normalize(text.slice(text.indexOf("SELECT "))));
+  }
 });
 
 test("configured API uses the real Neon driver with mocked HTTP transport", async () => {
