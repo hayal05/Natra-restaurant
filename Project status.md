@@ -25,6 +25,15 @@ live production synchronization is ready. See
 and remaining acceptance gates, and
 [Security/reliability audit](cloud/SECURITY_RELIABILITY_AUDIT.md) for findings.
 
+## Post-audit follow-up
+
+The next source fix adds unapplied migration 015: PUBLIC execution is revoked
+and trusted search paths with pg_temp last are pinned for all eleven sync
+functions. Restricted-role and temporary-shadow regressions pass locally.
+[Database privileges](cloud/DATABASE_PRIVILEGES.md) records role dependencies
+and the remaining environment review. No live grants or gates changed.
+The follow-up commit requires Windows CI before being treated as a build.
+
 ## Verification
 
 Task 42 commit `1219c6e` passed Windows CI run `40364954977`: 101 Node tests,

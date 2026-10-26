@@ -53,11 +53,13 @@ stale-callback rejection, fresh lease acquisition and shared-guard release.
    malformed event or missing dependency can block subsequent ordered pages.
    Define server validation and auditable repair/quarantine without silently
    skipping financial events or advancing a failed cursor.
-5. **Database privileges:** new entry points revoke PUBLIC execution and use
-   SECURITY INVOKER. Older routines 004–008 retain default grants/search paths.
-   Audit actual role memberships, schema/table/sequence grants and helper
-   execution rights in staging; provision separate admin/runtime roles with
-   fixed search paths. No grant changes were applied to any service.
+5. **Database privileges:** the post-audit source follow-up adds migration 015
+   to revoke PUBLIC execution and pin trusted search paths (pg_temp last) on
+   all eleven routines, including legacy 004–008 helpers. Restricted-role and
+   temporary-shadow tests cover this source fix. Actual role memberships,
+   schema/table/sequence grants, owner-controlled public schema and separate
+   admin/issuer/runtime roles still need staging review. See
+   [Database privileges](DATABASE_PRIVILEGES.md). No live grants were changed.
 6. **Operational/concurrency evidence:** embedded PGlite is not multiple real
    PostgreSQL connections; local SQLite scenarios are not two Windows devices.
    Test simultaneous commits, session completion/revocation under load, lock

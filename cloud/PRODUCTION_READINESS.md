@@ -41,7 +41,7 @@ PGlite and generated test keys. None contact live Neon. See
 | WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Review/remediation pending |
 | Financial conflicts | Reviewed handling of two offline settlements/reversals and dependency conflicts; no silent financial skips | Resolution workflow pending |
 | Ledger safety | Entity-specific validation and auditable rejected-event repair/quarantine | Production policy pending |
-| Database roles | Separate admin/runtime role and helper/table/schema/sequence grant review | No staging/live grant evidence |
+| Database roles | Separate admin/runtime role and helper/table/schema/sequence grant review | Source migration 015 and role regressions added; staging/live evidence pending |
 | Concurrency | Multiple real PostgreSQL connections and two Windows installations; lock/revocation/midnight tests | Not run |
 | Operations | Throttling, redacted monitoring, backup/restore drill, retention and key revocation drill | Not established |
 | Release approval | Explicit approval of merge, deployment/configuration and activation | Not granted |
@@ -71,7 +71,7 @@ through Task 35 remain historical snapshots; they do not include Tasks 36–43.
    workspace/installation identities, durable cursors and pending event IDs.
    A restored/cloned database must not silently become a second active device
    with the same installation identity; approve the clone/re-enrollment policy.
-3. Review SQL 001–014 in order and least-privilege grants. Run them only in the
+3. Review SQL 001–015 in order and least-privilege grants. Run them only in the
    separately approved environment. Provision server secrets/signing material
    outside source and desktop bundles; publish public verification keys only.
 4. Configure exact issuer/audience/JWKS and confirmed WebView origins. Test bad
@@ -107,3 +107,10 @@ gate or resuming a pilot requires accepted recovery evidence and approval.
 Local-first operation remains the normal mode while the staged Neon path is
 closed. Existing legacy Turso configuration and archive/backup behavior were
 not repurposed as Neon provisioning.
+
+## Post-audit source follow-up
+
+Migration 015 hardens named function privileges/search paths without changing
+business bodies. See [Database privileges](DATABASE_PRIVILEGES.md) for test
+evidence and required environment review. This closes the source-level default
+execution/search-path gap; the live-role acceptance gate remains open.
