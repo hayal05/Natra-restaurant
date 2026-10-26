@@ -80,8 +80,8 @@ mod tests {
     fn closed_release_and_exact_local_exchange_callbacks() {
         let _serial = super::super::manager::SYNC_TEST_LOCK.lock().unwrap();
         assert!(!LIVE_NEON_SYNC_ENABLED);
-        let mut conn = Connection::open_in_memory().unwrap();
-        crate::database::migrations::run(&conn).unwrap();
+        let db = crate::database::Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
         let event_id = {
             let tx = conn.transaction().unwrap();
             let id = crate::sync::queue::enqueue_cloud_event(&tx,"categories","local:bridge","upsert",
