@@ -51,8 +51,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Test serverless API health handler
-        run: node --test cloud/tests/health.test.js
+      - name: Test serverless API security and health
+        run: node --test cloud/tests/*.test.js
 
       - name: Run Rust tests
         working-directory: src-tauri
