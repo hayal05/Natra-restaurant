@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../worker.js";
 
-const req = (token) => new Request("https://sync.example.test/sync/events", {
+const req = (token) => new Request("https://sync.example.test/sync/upload", {
   method: "POST",
   headers: token ? { authorization: token } : {},
 });
@@ -51,4 +51,17 @@ test("even authenticated clients cannot upload before activation", async () => {
   });
   assert.equal(response.status,501);
   assert.deepEqual(await response.json(), { error:"sync_endpoint_not_implemented" });
+});
+
+test("only documented routes and methods are exposed", async () => {
+  const unknown = await worker.fetch(new Request("https://sync.example.test/sync/unknown"));
+  assert.equal(unknown.status,404);
+  const method = await worker.fetch(new Request("https://sync.example.test/sync/upload"));
+  assert.equal(method.status,405);
+  assert.equal(method.headers.get("allow"),"POST");
+  const pullMethod = await worker.fetch(new Request("https://sync.example.test/sync/pull",{
+    method:"POST"
+  }));
+  assert.equal(pullMethod.status,405);
+  assert.equal(pullMethod.headers.get("allow"),"GET");
 });
