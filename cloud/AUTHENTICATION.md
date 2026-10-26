@@ -1,64 +1,98 @@
-# Task 35 authentication integration
+# Task 35 authentication and trusted provisioning
 
-Status: implemented for review; not configured or deployed. Upload and pull
-still return HTTP 501 after successful authentication and session validation.
+Source implementation is ready for review. No live credentials, migrations,
+identity-provider configuration or deployments have been applied. Upload and
+pull still return HTTP 501 after successful authentication/session validation.
 
-The Worker can verify RS256 JWTs using a trusted issuer's public JWKS. This
-provides a configurable verification boundary; it does not enroll devices,
-create users, issue tokens, or choose an identity provider.
+## Verification in the sync Worker
 
-Server configuration, to be supplied only when deployment is authorized:
+The Worker verifies RS256 JWTs against a configured issuer's public JWKS.
+It requires the expected issuer and audience, a valid signature, expiration,
+a nonempty subject, UUID workspace/installation/session claims and a
+space-separated scope containing `natra:sync`. It checks `nbf` when present.
+Installation IDs and ordinary local restaurant logins alone grant no access.
 
-| Variable | Purpose |
+JWKS retrieval uses only the pinned server URL, never token `jku` or `x5u`
+headers. It has a five-second timeout and cached keys with rotation support.
+Authentication errors return generic 401 responses; missing/invalid server
+configuration returns 503. Current Neon state must also authorize the scope:
+the device is active in the workspace and its session is running/unexpired.
+
+| Server variable | Purpose |
 | --- | --- |
-| `SYNC_JWT_ISSUER` | Exact expected issuer; HTTPS URL |
+| `SYNC_JWT_ISSUER` | Exact expected HTTPS issuer |
 | `SYNC_JWT_AUDIENCE` | Audience dedicated to this sync API |
 | `SYNC_JWKS_URL` | Pinned HTTPS public-key endpoint |
 | `NEON_DATABASE_URL` | Server-only Neon connection secret |
 
-The trusted issuer must authorize the workspace and registered installation
-before signing claims. Required claims are `iss`, `aud`, `exp`, a nonempty
-`sub`, UUID `workspace_id`, UUID `installation_id`, UUID `session_id`, and a
-space-separated `scope` containing `natra:sync`. Normal local restaurant
-logins and installation IDs alone do not grant cloud authorization.
+Function-based verifier/validator overrides remain available for trusted
+server composition and tests; request fields cannot set them. Future
+financial operations must revalidate scope in their own database transaction;
+preflight query locks do not survive its HTTP request.
 
-The verifier checks the signature, issuer, audience, expiration and `nbf`
-when present. It accepts only RS256. Key retrieval uses the configured URL,
-not a token's `jku` or `x5u` header, with a five-second timeout and cached keys
-that can refresh for key rotation. Authentication errors return generic 401
-responses. Missing or invalid server configuration returns 503.
+## Trusted administration command
 
-After authentication, the API validates UUID scope and queries current Neon
-state: the device must remain active in the claimed workspace and its session
-must remain running and unexpired. Future financial operations must repeat
-that database authorization within their own transaction; this preflight's
-locks do not survive its HTTP query.
+`cloud/admin/sync-admin.js` is a Node server-administration entry point. Its
+trust boundary is restricted host/OS access plus provisioning credentials,
+not the local desktop login. Only an operator authorized to administer the
+workspace and grant the subject access may invoke it. No public HTTP route
+or desktop action exposes provisioning. The workspace must already exist.
 
-The function-based `SYNC_AUTH_VERIFIER` and `SYNC_SESSION_VALIDATOR` overrides
-remain available for trusted server composition and tests; request fields
-cannot set them. Production selection/configuration of an issuer and its
-secure enrollment/token-issuance flow remains pending. Tests use generated
-keys and mocked HTTP; no live identity provider or Neon database was contacted.
+Command forms (placeholder IDs must be replaced with approved UUIDs):
 
-## Trusted device enrollment
+```text
+node cloud/admin/sync-admin.js --help
+node cloud/admin/sync-admin.js enroll WORKSPACE_UUID INSTALLATION_UUID
+node cloud/admin/sync-admin.js issue-token WORKSPACE_UUID INSTALLATION_UUID SUBJECT
+```
 
-`009_enroll_sync_device.sql` adds `public.enroll_sync_device(workspace,
-installation)`. Apply it only after schema review and separate authorization
-for cloud changes. It has not been applied to Neon by this implementation.
+Enrollment uses bound parameters and `009_enroll_sync_device.sql`. It is
+idempotent for an active installation in the same workspace, preserves its
+registration timestamp, refuses reassignment and refuses automatic
+reactivation. The command does not create workspaces or infer permission
+from a user-supplied hardware/installation ID.
 
-The server-only `createDeviceEnroller` helper calls this function with bound
-parameters. A trusted administrator must authorize the target workspace
-before calling the helper. No HTTP enrollment route, public registration,
-or automatic client enrollment is enabled.
+Token issuance additionally requires these issuer-host settings:
 
-Enrollment is idempotent for an active installation in the same workspace.
-It preserves the existing registration timestamp, refuses cross-workspace
-reassignment, and refuses to reactivate a deactivated device. The routine
-runs with the caller's permissions; PUBLIC receives no execution grant.
-Grant access only to a trusted provisioning role when that role is defined.
+| Issuer-only variable | Purpose |
+| --- | --- |
+| `SYNC_SIGNING_KEY_FILE` | Restricted PKCS#8 RSA private-key file outside the checkout |
+| `SYNC_SIGNING_KEY_ID` | Key ID matching the issuer's public JWKS entry |
 
-`cloud/tests/enrollment.test.js` executes the schema, enrollment routine and
-session validation query in ephemeral embedded PostgreSQL (PGlite, a test-only
-dependency). It checks scope, device status, session lifecycle and function
-permissions. These tests do not demonstrate production concurrency behavior.
-Administrative entry-point integration and token issuance remain pending.
+The issuer uses `SYNC_JWT_ISSUER`, `SYNC_JWT_AUDIENCE` and `NEON_DATABASE_URL`
+as above. Provisioning the restricted key and publishing its matching public
+JWKS at the configured HTTPS URL remain deployment configuration work. Never
+put a signing key in the sync Worker, desktop bundle, repository or command
+arguments. The signing module is imported only by the administration command.
+
+`010_reserve_authorized_sync_session.sql` checks the workspace/device binding
+under a device row lock and reuses `reserve_sync_session`: active-device
+checks, one active session per installation and the ten-session daily limit
+remain enforced. Tokens bind the subject, workspace, installation and a
+server-generated session UUID. Their expiration is capped at the database
+session's 15-minute deadline; the caller cannot choose a session ID or TTL.
+
+If issuance fails, cleanup attempts to mark only that attempt's generated
+session failed. An ambiguous network response can prevent cleanup; abandoned
+sessions expire after 15 minutes. There is no automatic reservation retry.
+Successful command output includes a bearer token and must be handled as a
+secret; errors emit a generic message without database/key details.
+
+New routines are SECURITY INVOKER and revoke PUBLIC execution. During an
+authorized deployment, apply 009 after the device schema and 010 after 004;
+005/006 must also exist for session lifecycle/issuance cleanup. Review grants
+for trusted provisioning roles. No migration is applied by the command.
+
+## Validation and remaining work
+
+Tests use generated test keys, mocked HTTPS and ephemeral embedded PostgreSQL
+(PGlite, a development-only dependency). They exercise enrollment, real
+session SQL, quota checks, signature verification and both administration
+actions without contacting live Neon or an identity provider. They do not
+establish production concurrency behavior.
+
+Before production: configure the trusted issuer, public JWKS, restricted
+signing host and database roles; run authorized environment checks. Financial
+upload/download, client token delivery, Sync Now integration and operational
+concurrency testing remain later integration work. Live synchronization and
+production deployment require separate authorization.
