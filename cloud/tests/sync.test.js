@@ -78,3 +78,16 @@ test("malformed verified workspace and installation claims are rejected", async 
     assert.equal(response.status,403);
   }
 });
+
+test("misconfigured verifier and oversized bearer tokens fail closed", async () => {
+  const configuredWrong = await worker.fetch(req("Bearer token"), {
+    SYNC_AUTH_VERIFIER: "not-a-function",
+  });
+  assert.equal(configuredWrong.status,503);
+  const response = await worker.fetch(req("Bearer " + "x".repeat(9000)), {
+    SYNC_AUTH_VERIFIER: async () => {
+      throw new Error("oversized token should never be verified");
+    },
+  });
+  assert.equal(response.status,401);
+});
