@@ -1,8 +1,9 @@
+import {forwardAbort} from "./abort.js";
 // Staged transport only. Task 38 binds the existing atomic SQLite page apply
 // helper and durable cursor reader. Loading this module starts no request.
 import {parseCursor,validateDownloadPage,MAX_DOWNLOAD_BYTES} from "./download_protocol.js";
 
-export async function downloadPage({endpoint,token,readCursor,applyPage,limit=100,fetchImpl=globalThis.fetch}) {
+export async function downloadPage({endpoint,token,readCursor,applyPage,limit=100,fetchImpl=globalThis.fetch,signal}) {
   const url=new URL(endpoint);
   if (url.protocol!=="https:" || url.username || url.password || url.search || url.hash || url.pathname!=="/sync/pull" ||
       typeof token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(token) ||
@@ -13,8 +14,10 @@ export async function downloadPage({endpoint,token,readCursor,applyPage,limit=10
   url.searchParams.set("after",after);
   url.searchParams.set("limit",String(limit));
   const controller=new AbortController();
+  const detach=forwardAbort(signal,controller);
   const timer=setTimeout(()=>controller.abort(),30000);
   try {
+    if(controller.signal.aborted)throw new Error("Sync request cancelled");
     const response=await fetchImpl(url.href,{method:"GET",headers:{authorization:"Bearer "+token},
       signal:controller.signal,redirect:"error",credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer"});
     if (response.status!==200 || !response.body ||
@@ -47,5 +50,5 @@ export async function downloadPage({endpoint,token,readCursor,applyPage,limit=10
     return {downloaded:page.events.length,next_cursor:page.next_cursor,has_more:page.has_more};
   } catch {
     throw new Error("Cloud download did not finish; retain the durable cursor for retry");
-  } finally {clearTimeout(timer);}
+  } finally {clearTimeout(timer);detach();}
 }

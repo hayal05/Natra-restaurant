@@ -1,3 +1,4 @@
+import {forwardAbort} from "./abort.js";
 // Staged WebView fetch transport. Task 38 will provide the existing durable
 // outbox read/ack callbacks and connect this to an explicit Sync Now action.
 // The manual coordinator imports this module; loading it starts no request.
@@ -69,7 +70,7 @@ async function readReply(response) {
   return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
 }
 
-export async function uploadPendingBatch({endpoint,token,installationId,readPending,acknowledge,fetchImpl=globalThis.fetch}) {
+export async function uploadPendingBatch({endpoint,token,installationId,readPending,acknowledge,fetchImpl=globalThis.fetch,signal}) {
   const url = new URL(endpoint);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/sync/upload" ||
       typeof token !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(token) ||
@@ -84,8 +85,10 @@ export async function uploadPendingBatch({endpoint,token,installationId,readPend
   if (!events.length) return {uploaded:0};
   const submitted = events.map(event => event.event_id);
   const controller = new AbortController();
+  const detach=forwardAbort(signal,controller);
   const timer = setTimeout(() => controller.abort(),30000);
   try {
+    if(controller.signal.aborted)throw new Error("Sync request cancelled");
     const response = await fetchImpl(url.href,{
       method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},
       body,signal:controller.signal,redirect:"error",credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer",
@@ -100,5 +103,5 @@ export async function uploadPendingBatch({endpoint,token,installationId,readPend
     // Never surface fetch errors containing URLs, credentials or server text.
     // Retain original outbox IDs; a timed-out server may already have committed.
     throw new Error("Cloud upload did not finish; retain pending events for retry");
-  } finally {clearTimeout(timer);}
+  } finally {clearTimeout(timer);detach();}
 }

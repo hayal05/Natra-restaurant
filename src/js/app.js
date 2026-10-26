@@ -29,6 +29,8 @@ function buildLayouts() {
   });
   let syncUser=store.getState().user;
   store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;manualSync.invalidate();void manualSync.refresh();}});
+  window.addEventListener("offline",()=>manualSync.invalidate());
+  window.addEventListener("online",()=>{void manualSync.refresh();});
   void manualSync.refresh();
   shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};

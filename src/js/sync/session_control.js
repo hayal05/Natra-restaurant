@@ -1,10 +1,13 @@
-export async function finishSession({endpoint,token,action,fetchImpl=globalThis.fetch}) {
+import {forwardAbort} from "./abort.js";
+export async function finishSession({endpoint,token,action,fetchImpl=globalThis.fetch,signal}) {
   const url=new URL(endpoint);
   if(!["complete","fail"].includes(action) || url.protocol!=="https:" || url.username || url.password || url.search || url.hash ||
     url.pathname!=="/sync/"+action || typeof token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(token)) throw new Error("Invalid session control configuration");
   const controller=new AbortController();
+  const detach=forwardAbort(signal,controller);
   const timer=setTimeout(()=>controller.abort(),15000);
   try {
+    if(controller.signal.aborted)throw new Error("Sync request cancelled");
     const response=await fetchImpl(url.href,{method:"POST",headers:{authorization:"Bearer "+token},
       signal:controller.signal,redirect:"error",credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer"});
     if(response.status!==200 || !response.body ||
@@ -21,5 +24,5 @@ export async function finishSession({endpoint,token,action,fetchImpl=globalThis.
       (action==="complete" && !result.accepted)) throw new Error("Session was not completed");
     return result.accepted;
   } catch {throw new Error("Cloud session confirmation did not finish");}
-  finally {clearTimeout(timer);}
+  finally {clearTimeout(timer);detach();}
 }

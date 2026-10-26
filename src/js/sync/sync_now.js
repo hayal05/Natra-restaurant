@@ -15,8 +15,8 @@ function bindTokenToInstallation(token,installationId) {
 }
 
 // A manual coordinator; constructing/refreshing it never starts network I/O.
-export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllowance=()=>{},fetchImpl=globalThis.fetch}) {
-  let running=false,generation=0;
+export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllowance=()=>{},isOnline=()=>globalThis.navigator?.onLine!==false,fetchImpl=globalThis.fetch}) {
+  let running=false,generation=0,activeAbort;
   const emit=(status,available)=>onState(status,available);
   const validConfig=config=>{
     if(!config)return false;
@@ -30,10 +30,11 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
     if(origins.size!==1 || typeof config.token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(config.token)) throw new Error("Invalid sync configuration");
     return true;
   };
-  return {
-    invalidate(){generation++;emit(running?"syncing":"ready",false);},
+  const controller = {
+    invalidate(){generation++;activeAbort?.abort();emit(isOnline()?(running?"syncing":"ready"):"offline",false);},
     async refresh(){
       if(running)return;
+      if(!isOnline()){emit("offline",false);return;}
       const version=generation,owner=getUserKey();
       let available=false;
       try {available=!!owner && validConfig(await bridge.configuration());}catch{}
@@ -41,19 +42,20 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
     },
     async run(){
       if(running)throw new Error("Synchronization is already in progress");
-      running=true;
+      if(!isOnline()){emit("offline",false);return {ran:false,pushed:0,pulled:0};}
+      running=true;activeAbort=new AbortController();
       const version=generation,owner=getUserKey();
       let lease,config,completed=false,tokenBound=false;
       let pushed=0,pulled=0;
-      const current=()=>{if(!owner || generation!==version || getUserKey()!==owner)throw new Error("Sync owner changed");};
+      const current=()=>{if(!owner || !isOnline() || activeAbort.signal.aborted || generation!==version || getUserKey()!==owner)throw new Error("Sync owner changed");};
       try {
         current();config=await bridge.configuration();
         if(!validConfig(config)){emit("ready",false);return {ran:false,pushed:0,pulled:0};}
         current();emit("syncing",true);
         lease=await bridge.begin();current();
         bindTokenToInstallation(config.token,lease.installation_id);tokenBound=true;
-        const allowance=await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl});
-        onAllowance(allowance);
+        const allowance=await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl,signal:activeAbort.signal});
+        current();onAllowance(allowance);
         if(!allowance.session_permitted)throw new Error("No permitted daily sync session");
         // The backend lease fixes an initial rowid cutoff. Concurrent local
         // writes retain new IDs for the next manual cycle.
@@ -62,7 +64,7 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
           if(!pending.length)break;
           if(batch>=100)throw new Error("Manual sync batch limit exceeded");
           const result=await uploadPendingBatch({endpoint:config.uploadEndpoint,token:config.token,
-            installationId:lease.installation_id,fetchImpl,
+            installationId:lease.installation_id,fetchImpl,signal:activeAbort.signal,
             readPending:async()=>{current();return pending;},
             acknowledge:async ids=>{current();await bridge.acknowledge(lease.exchange_id,ids);}});
           if(result.uploaded<=0)throw new Error("Upload made no progress");
@@ -71,26 +73,30 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
         for(let page=0;;page++){
           if(page>=100)throw new Error("Manual sync page limit exceeded");
           current();let before;
-          const result=await downloadPage({endpoint:config.pullEndpoint,token:config.token,fetchImpl,
+          const result=await downloadPage({endpoint:config.pullEndpoint,token:config.token,fetchImpl,signal:activeAbort.signal,
             readCursor:async()=>{current();const cursor=await bridge.readCursor(lease.exchange_id);if(before===undefined)before=cursor;return cursor;},
             applyPage:async events=>{current();await bridge.applyPage(lease.exchange_id,before,events);}});
           pulled+=result.downloaded;
           if(!result.has_more)break;
         }
-        current();await finishSession({endpoint:config.completeEndpoint,token:config.token,action:"complete",fetchImpl});
+        current();await finishSession({endpoint:config.completeEndpoint,token:config.token,action:"complete",fetchImpl,signal:activeAbort.signal});
         completed=true;
-        onAllowance(await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl}));
+        current();onAllowance(await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl,signal:activeAbort.signal}));
         await bridge.end(lease.exchange_id);lease=null;current();emit("completed",true);
         return {ran:true,pushed,pulled};
       }catch{
-        if(lease && config && tokenBound && !completed){try{await finishSession({endpoint:config.failEndpoint,token:config.token,action:"fail",fetchImpl});}catch{}}
-        emit("failed",!!owner && getUserKey()===owner && generation===version);
+        if(lease && config && tokenBound && !completed && isOnline()){try{await finishSession({endpoint:config.failEndpoint,token:config.token,action:"fail",fetchImpl});}catch{}}
+        emit(isOnline()?"failed":"offline",isOnline() && !!owner && getUserKey()===owner && generation===version);
         throw new Error("Synchronization did not finish; retry when ready");
       }finally{
         if(lease){try{await bridge.end(lease.exchange_id);}catch{}}
-        running=false;
-        if(getUserKey()!==owner || generation!==version)emit("ready",false);
+        running=false;activeAbort=undefined;
+        if(getUserKey()!==owner || generation!==version){
+          emit(isOnline()?"ready":"offline",false);
+          if(isOnline() && getUserKey())void controller.refresh();
+        }
       }
     },
   };
+  return controller;
 }

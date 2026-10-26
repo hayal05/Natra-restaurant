@@ -27,13 +27,14 @@ export function clearHeaderActions(headerEl) {
 /**
  * Shared manual-sync status. Availability is supplied by the gated controller.
  * @param {HTMLElement} headerEl
- * @param {"ready"|"syncing"|"failed"|"completed"} status
+ * @param {"offline"|"ready"|"syncing"|"failed"|"completed"} status
  * @param {boolean} available
  */
 export function setHeaderSyncStatus(headerEl, status = "ready", available = false) {
   const button = headerEl.querySelector("#header-sync-btn");
   if (!button) return;
   const labels = {
+    offline: "↻ Offline",
     ready: "↻ Sync Now",
     syncing: "↻ Syncing…",
     failed: "↻ Retry Sync",
@@ -42,11 +43,11 @@ export function setHeaderSyncStatus(headerEl, status = "ready", available = fals
   const safeStatus = Object.hasOwn(labels, status) ? status : "ready";
   button.textContent = labels[safeStatus];
   button.dataset.syncStatus = safeStatus;
-  button.disabled = !available || safeStatus === "syncing";
+  button.disabled = !available || safeStatus === "syncing" || safeStatus === "offline";
   if(!available)delete button.dataset.remainingToday;
   button.setAttribute("aria-busy", String(safeStatus === "syncing"));
-  button.setAttribute("aria-label", !available ? "Sync now (not available)" : labels[safeStatus].replace(/^[↻✓]\s*/,""));
-  button.title = !available
+  button.setAttribute("aria-label", safeStatus === "offline" ? "Sync now (offline)" : !available ? "Sync now (not available)" : labels[safeStatus].replace(/^[↻✓]\s*/,""));
+  button.title = safeStatus === "offline" ? "Connect to the internet, then start synchronization manually" : !available
     ? "Cloud synchronization is not configured yet"
     : safeStatus === "syncing"
       ? "Synchronization is in progress"
