@@ -45,6 +45,7 @@ test("workspace and installation must both be authorized", async () => {
 
 test("even authenticated clients cannot upload before activation", async () => {
   const response = await worker.fetch(req("Bearer token"),{
+    SYNC_SESSION_VALIDATOR: async () => true,
     SYNC_AUTH_VERIFIER: async () => ({
       authorized: true,workspace_id:"11111111-1111-4111-8111-111111111111",installation_id:"22222222-2222-4222-8222-222222222222",session_authorized:true,session_id:"33333333-3333-4333-8333-333333333333",session_workspace_id:"11111111-1111-4111-8111-111111111111",session_installation_id:"22222222-2222-4222-8222-222222222222",
     }),
@@ -123,5 +124,81 @@ test("sync session must match authorized workspace and installation", async () =
     });
     assert.equal(response.status,403);
     assert.deepEqual(await response.json(), {error:"sync_session_required"});
+  }
+});
+
+const verifiedIdentity = {
+  authorized: true,
+  workspace_id: "11111111-1111-4111-8111-111111111111",
+  installation_id: "22222222-2222-4222-8222-222222222222",
+  session_authorized: true,
+  session_id: "33333333-3333-4333-8333-333333333333",
+  session_workspace_id: "11111111-1111-4111-8111-111111111111",
+  session_installation_id: "22222222-2222-4222-8222-222222222222",
+};
+
+test("server session validation is mandatory and fails closed", async () => {
+  for (const validator of [undefined, "not-a-function"]) {
+    const response = await worker.fetch(req("Bearer token"), {
+      SYNC_AUTH_VERIFIER: async () => verifiedIdentity,
+      SYNC_SESSION_VALIDATOR: validator,
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {error:"sync_session_validation_not_configured"});
+  }
+  for (const result of [false, undefined, null, 1, "true", {authorized:true}]) {
+    const response = await worker.fetch(req("Bearer token"), {
+      SYNC_AUTH_VERIFIER: async () => verifiedIdentity,
+      SYNC_SESSION_VALIDATOR: async () => result,
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {error:"sync_session_required"});
+  }
+});
+
+test("database validation failures expose no database details", async () => {
+  const response = await worker.fetch(req("Bearer token"), {
+    SYNC_AUTH_VERIFIER: async () => verifiedIdentity,
+    SYNC_SESSION_VALIDATOR: async () => {throw new Error("private connection details");},
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {error:"sync_session_validation_unavailable"});
+});
+
+test("upload and pull validators receive only authenticated scope", async () => {
+  for (const path of ["upload", "pull"]) {
+    let calls = 0;
+    const request = new Request("https://sync.example.test/sync/" + path + "?workspace_id=untrusted", {
+      method: path === "upload" ? "POST" : "GET",
+      headers: {authorization:"Bearer token", "x-session-id":"untrusted"},
+      ...(path === "upload" ? {body:JSON.stringify({session_id:"untrusted"})} : {}),
+    });
+    const response = await worker.fetch(request, {
+      SYNC_AUTH_VERIFIER: async () => verifiedIdentity,
+      SYNC_SESSION_VALIDATOR: async (scope) => {
+        calls++;
+        assert.deepEqual(scope, {
+          workspace_id:verifiedIdentity.workspace_id,
+          installation_id:verifiedIdentity.installation_id,
+          session_id:verifiedIdentity.session_id,
+        });
+        assert.equal(Object.isFrozen(scope), true);
+        return true;
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(response.status, 501);
+  }
+});
+
+test("unauthenticated or mismatched callers never reach session validation", async () => {
+  for (const identity of [null, {...verifiedIdentity, session_installation_id:"44444444-4444-4444-8444-444444444444"}]) {
+    let calls = 0;
+    const response = await worker.fetch(req("Bearer token"), {
+      SYNC_AUTH_VERIFIER: async () => identity,
+      SYNC_SESSION_VALIDATOR: async () => {calls++; return true;},
+    });
+    assert.equal(response.status, 403);
+    assert.equal(calls, 0);
   }
 });

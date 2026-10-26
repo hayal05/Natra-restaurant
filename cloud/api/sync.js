@@ -56,6 +56,24 @@ export async function handleSyncRequest(request, env = {}) {
       identity.session_installation_id !== identity.installation_id) {
     return json(403, "sync_session_required");
   }
+  // Authentication claims alone cannot establish that a session is still
+  // running. The server adapter must revalidate against current database
+  // state using queries/validate_sync_session.sql and these verified IDs.
+  // A future operation must share the validator's database transaction.
+  if (typeof env.SYNC_SESSION_VALIDATOR !== "function") {
+    return json(503, "sync_session_validation_not_configured");
+  }
+  let sessionValid;
+  try {
+    sessionValid = await env.SYNC_SESSION_VALIDATOR(Object.freeze({
+      workspace_id: identity.workspace_id,
+      installation_id: identity.installation_id,
+      session_id: identity.session_id,
+    }));
+  } catch {
+    return json(503, "sync_session_validation_unavailable");
+  }
+  if (sessionValid !== true) return json(403, "sync_session_required");
   // Deliberately do not route to Neon until authorized session, scope,
   // and per-installation quota checks are integrated and tested.
   return json(501, "sync_endpoint_not_implemented");
