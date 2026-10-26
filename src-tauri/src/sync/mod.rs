@@ -15,6 +15,7 @@
 //!   manual user-initiated synchronization.
 
 pub(crate) mod cloud_dispatch;
+pub(crate) mod cloud_bridge;
 pub mod conflict;
 pub mod manager;
 pub mod queue;

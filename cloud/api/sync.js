@@ -1,3 +1,4 @@
+import { createSessionFinisher } from "../db/session-control.js";
 import { createEventPuller } from "../db/pull.js";
 import { handlePullRequest } from "./pull.js";
 import { createBatchUploader } from "../db/upload.js";
@@ -23,6 +24,8 @@ export async function handleSyncRequest(request, env = {}) {
   const supported = {
     "/sync/upload": "POST",
     "/sync/pull": "GET",
+    "/sync/complete": "POST",
+    "/sync/fail": "POST",
   };
   if (!Object.hasOwn(supported, path)) return json(404, "not_found");
   if (request.method !== supported[path]) {
@@ -69,6 +72,39 @@ export async function handleSyncRequest(request, env = {}) {
       identity.session_installation_id !== identity.installation_id) {
     return json(403, "sync_session_required");
   }
+  const scope = Object.freeze({workspace_id:identity.workspace_id,
+    installation_id:identity.installation_id,session_id:identity.session_id});
+  if (path === "/sync/complete" || path === "/sync/fail") {
+    if (env.SYNC_SESSION_CONTROL_ENABLED !== "true") return json(501,"sync_endpoint_not_implemented");
+    // No caller-controlled scope or action body is accepted. Completion retries
+    // must reach the database even if the first response was lost after commit.
+    if (new URL(request.url).search) return json(400,"invalid_session_request");
+    if (request.body) {
+      const reader=request.body.getReader();
+      try {
+        let empty=false;
+        for(let i=0;i<8;i++) {
+          const {done,value}=await reader.read();
+          if(done){empty=true;break;}
+          if(value.byteLength){await reader.cancel();return json(400,"invalid_session_request");}
+        }
+        if(!empty){await reader.cancel();return json(400,"invalid_session_request");}
+      } catch {return json(400,"invalid_session_request");}
+      finally {reader.releaseLock();}
+    }
+    let finish = env.SYNC_SESSION_FINISHER;
+    if (finish === undefined) {
+      try { finish = createSessionFinisher(env.NEON_DATABASE_URL); }
+      catch { return json(503,"session_control_not_configured"); }
+    }
+    if (typeof finish !== "function") return json(503,"session_control_not_configured");
+    try {
+      const result = await finish(scope,path === "/sync/complete" ? "complete" : "fail");
+      return new Response(JSON.stringify(result),{status:200,headers});
+    } catch(error) {
+      return json(error?.code === "42501" ? 403 : 503,"session_control_unavailable");
+    }
+  }
   // Authentication claims alone cannot establish that a session is still
   // running. The server adapter must revalidate against current database
   // state using queries/validate_sync_session.sql and these verified IDs.
@@ -85,8 +121,6 @@ export async function handleSyncRequest(request, env = {}) {
   if (typeof validateSession !== "function") {
     return json(503, "sync_session_validation_not_configured");
   }
-  const scope = Object.freeze({workspace_id:identity.workspace_id,
-    installation_id:identity.installation_id,session_id:identity.session_id});
   let sessionValid;
   try {
     sessionValid = await validateSession(scope);

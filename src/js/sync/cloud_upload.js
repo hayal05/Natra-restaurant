@@ -1,6 +1,6 @@
 // Staged WebView fetch transport. Task 38 will provide the existing durable
 // outbox read/ack callbacks and connect this to an explicit Sync Now action.
-// This module is not loaded by index.html and cannot start synchronization.
+// The manual coordinator imports this module; loading it starts no request.
 import {uuid, MAX_UPLOAD_BYTES, validateUploadBatch} from "./upload_protocol.js";
 const MAX_REPLY_BYTES = 262144;
 

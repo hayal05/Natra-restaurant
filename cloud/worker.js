@@ -1,3 +1,4 @@
+import { withSyncCors } from "./api/cors.js";
 import { handleHealth } from "./api/health.js";
 import { handleSyncRequest } from "./api/sync.js";
 
@@ -7,7 +8,7 @@ import { handleSyncRequest } from "./api/sync.js";
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (path.startsWith("/sync/")) return handleSyncRequest(request, env);
+    if (path.startsWith("/sync/")) return withSyncCors(request, env, () => handleSyncRequest(request, env));
     return handleHealth(request);
   },
 };

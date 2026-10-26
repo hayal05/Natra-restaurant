@@ -13,6 +13,8 @@ Branch: `feature/neon-sync-installation-id`
   Desktop receipt handling and transport are included.
 - Task 37: scoped incremental download, bounded lookahead pagination, exact
   cursor strings and staged desktop page-apply transport are implemented.
+- Task 38: manual header coordinator, gated IPC callbacks, shared exchange
+  guard, session completion/failure and exact-origin CORS are implemented.
 
 The uploader preserves stable outbox IDs, bounds batch/request sizes, validates
 receipts against the exact submitted snapshot, and acknowledges only committed
@@ -24,8 +26,8 @@ ledger entries. Existing local financial calculations are unchanged.
 | Task | Scope | Status |
 | --- | --- | --- |
 | 37 | Incremental download | Source implemented |
-| 38 | Connect Sync Now, durable outbox callbacks, credentials and WebView origin/CORS | Next |
-| 39 | Daily synchronization limit integration | Pending |
+| 38 | Manual Sync Now source integration behind closed release gates | Source implemented |
+| 39 | Daily synchronization limit integration | Next |
 | 40 | Network recovery | Pending |
 | 41 | Multi-device testing | Pending |
 | 42 | Security and reliability audit | Pending |
@@ -33,17 +35,18 @@ ledger entries. Existing local financial calculations are unchanged.
 
 ## Validation
 
-The local API/client/database suite has 77 passing tests. Embedded PostgreSQL,
+The local API/client/database suite has 91 passing tests. Embedded PostgreSQL,
 generated test keys and mocked HTTP are used; no live database is contacted.
 Windows CI runs these tests, Rust tests and both MSI/NSIS builds for each source
-change. The Actions result for the exact commit is authoritative; Task 37 must pass
-Windows CI before starting Task 38.
+change. The Actions result for the exact commit is authoritative; Task 38 must pass
+Windows CI before starting Task 39.
 
 ## Operating state
 
 - Live synchronization is disabled; no upload flag is set in deployment config.
-- The staged desktop upload/download modules are not loaded by index.html or connected to UI.
-- SQLite read/ack callback binding and Sync Now integration remain Task 38.
+- The header has manual coordinator wiring; the backend release gate is false
+  and configuration returns None, so no live network exchange can start.
+- Approved host provisioning, role binding and fresh token delivery remain pending.
 - No cloud migrations, live credentials, signing keys or services were applied.
 - Nothing was merged into main or deployed to production.
 - Production configuration and live/concurrency checks remain pending.

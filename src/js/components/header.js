@@ -25,8 +25,7 @@ export function clearHeaderActions(headerEl) {
 }
 
 /**
- * Shared header sync status. The button remains unavailable until a real
- * synchronization handler is attached in a later task.
+ * Shared manual-sync status. Availability is supplied by the gated controller.
  * @param {HTMLElement} headerEl
  * @param {"ready"|"syncing"|"failed"|"completed"} status
  * @param {boolean} available
@@ -45,6 +44,7 @@ export function setHeaderSyncStatus(headerEl, status = "ready", available = fals
   button.dataset.syncStatus = safeStatus;
   button.disabled = !available || safeStatus === "syncing";
   button.setAttribute("aria-busy", String(safeStatus === "syncing"));
+  button.setAttribute("aria-label", !available ? "Sync now (not available)" : labels[safeStatus].replace(/^[↻✓]\s*/,""));
   button.title = !available
     ? "Cloud synchronization is not configured yet"
     : safeStatus === "syncing"

@@ -84,3 +84,14 @@ export const archives = {
   downloadPdf: (filename) => invoke("download_transaction_archive_pdf", { filename }),
   export: (from, through) => invoke("export_transaction_archive", { from, through }),
 };
+
+// Manual Neon callbacks; backend release gate remains closed.
+export const cloudSync = {
+  configuration: () => invoke("cloud_sync_configuration"),
+  begin: () => invoke("cloud_sync_begin"),
+  readPending: (exchangeId) => invoke("cloud_sync_pending", {exchangeId}),
+  acknowledge: (exchangeId,eventIds) => invoke("cloud_sync_acknowledge", {exchangeId,eventIds}),
+  readCursor: (exchangeId) => invoke("cloud_sync_cursor", {exchangeId}),
+  applyPage: (exchangeId,after,events) => invoke("cloud_sync_apply", {exchangeId,after,events}),
+  end: (exchangeId) => invoke("cloud_sync_end", {exchangeId}),
+};

@@ -86,15 +86,23 @@ pub(crate) fn read_pending_uploads(
     conn: &rusqlite::Connection,
     limit: i64,
 ) -> AppResult<Vec<PendingUpload>> {
+    read_pending_uploads_through(conn, limit, None)
+}
+
+pub(crate) fn read_pending_uploads_through(
+    conn: &rusqlite::Connection,
+    limit: i64,
+    cutoff: Option<i64>,
+) -> AppResult<Vec<PendingUpload>> {
     if !(1..=500).contains(&limit) {
         return Err(AppError::Validation("invalid cloud upload batch size".into()));
     }
     let mut stmt = conn.prepare(
         "SELECT event_id,entity_type,entity_id,operation,payload
-         FROM cloud_outbox WHERE status='pending'
+         FROM cloud_outbox WHERE status='pending' AND (?2 IS NULL OR rowid<=?2)
          ORDER BY created_at ASC,rowid ASC LIMIT ?1"
     )?;
-    let rows = stmt.query_map([limit], |row| {
+    let rows = stmt.query_map(rusqlite::params![limit,cutoff], |row| {
         let payload: String = row.get(4)?;
         let payload = serde_json::from_str(&payload).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(

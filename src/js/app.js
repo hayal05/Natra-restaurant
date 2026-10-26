@@ -1,4 +1,5 @@
 import * as api from "./api.js";
+import { createSyncNowController } from "./sync/sync_now.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
 import { renderNavItems, setActiveNavItem } from "./components/sidebar.js";
@@ -18,6 +19,16 @@ function buildLayouts() {
     <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div><button id="header-sync-btn" class="btn btn-primary btn-sm" type="button" disabled title="Cloud synchronization is not configured yet" aria-label="Sync now (not yet available)">↻ Sync Now</button></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
   appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"));
   setHeaderSyncStatus(shell, "ready", false);
+  const manualSync=createSyncNowController({bridge:api.cloudSync,
+    getUserKey:()=>store.getState().user?.id??null,
+    onState:(status,available)=>setHeaderSyncStatus(shell,status,available)});
+  shell.querySelector("#header-sync-btn").addEventListener("click",async()=>{
+    try {const report=await manualSync.run();if(report.ran)pushToast("Synchronization completed.","success");}
+    catch {pushToast("Synchronization did not finish. Retry when ready.","error");}
+  });
+  let syncUser=store.getState().user;
+  store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;manualSync.invalidate();void manualSync.refresh();}});
+  void manualSync.refresh();
   shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
 }

@@ -39,9 +39,8 @@ new IDs for a retry. Sequence gaps after a rolled-back transaction are normal.
 
 The existing source outbox reads oldest-first and marks only acknowledged IDs
 synced. The staged WebView fetch transport validates every receipt against the exact
-submitted batch before calling its acknowledgement callback. Connecting these
-callbacks to the Tauri outbox commands and user-facing Sync Now action remains
-Task 38. No script is loaded into index.html and no request starts automatically.
+submitted batch before calling its acknowledgement callback. Task 38 connects these callbacks to gated Tauri commands and the manual header
+action. The coordinator imports the transports but starts no request on load.
 
 ## Deployment and tests
 

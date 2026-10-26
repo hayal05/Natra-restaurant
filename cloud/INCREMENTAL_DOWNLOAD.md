@@ -33,7 +33,8 @@ receipt/cursor without replaying their financial effect.
 bounds reads, cancels after 30 seconds and validates count, sequence ordering,
 unique event IDs, origins and cursor agreement before calling local apply.
 
-Task 38 will bind the existing Rust `apply_download_page` helper. That helper
+Task 38 binds the existing Rust `apply_download_page` helper behind a closed
+release gate. That helper
 commits business rows, receipts and cursor together; a failed replay rolls all
 of them back. There is no independent cursor setter in this transport. The
 client reads the durable cursor after application and requires agreement with
@@ -57,4 +58,4 @@ real service integration remain later checks.
 During a separately authorized deployment, review/apply 012 after 007 and grant
 execution only to trusted API roles. PUBLIC execution is revoked. No migrations,
 live credentials, service deployment, UI wiring or live flags are applied by
-this source implementation. Neither staged desktop module is loaded by HTML.
+this source implementation. The manual coordinator imports both transports; module loading starts no requests.

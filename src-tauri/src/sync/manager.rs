@@ -20,11 +20,13 @@ use super::turso::{self, TursoClient};
 // Shared by all sync entry points in this desktop process.
 // A drop guard guarantees release on success, error, or cancellation.
 static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) static SYNC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-struct SyncGuard;
+pub(crate) struct SyncGuard;
 
 impl SyncGuard {
-    fn acquire() -> Option<Self> {
+    pub(crate) fn acquire() -> Option<Self> {
         SYNC_RUNNING
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()
@@ -137,6 +139,7 @@ mod tests {
 
     #[test]
     fn sync_guard_blocks_overlap_and_releases_on_drop() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
         let first = SyncGuard::acquire().expect("first sync can begin");
         assert!(SyncGuard::acquire().is_none(), "overlapping sync is rejected");
         drop(first);
@@ -158,6 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_is_a_no_op_when_sync_disabled() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
         let db = db();
         let report = run_once(&db).await.unwrap();
         assert!(!report.ran);
@@ -166,6 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_reports_missing_credentials_when_enabled_without_them() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
         let db = db();
         {
             let conn = db.lock();

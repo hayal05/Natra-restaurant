@@ -9,3 +9,5 @@ pub mod month_closing;
 pub mod reports;
 pub mod settings;
 pub mod waiters;
+
+pub mod cloud_sync;

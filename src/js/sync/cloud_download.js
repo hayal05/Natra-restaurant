@@ -1,5 +1,5 @@
 // Staged transport only. Task 38 binds the existing atomic SQLite page apply
-// helper and durable cursor reader; this module is not loaded by index.html.
+// helper and durable cursor reader. Loading this module starts no request.
 import {parseCursor,validateDownloadPage,MAX_DOWNLOAD_BYTES} from "./download_protocol.js";
 
 export async function downloadPage({endpoint,token,readCursor,applyPage,limit=100,fetchImpl=globalThis.fetch}) {

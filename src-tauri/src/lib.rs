@@ -34,6 +34,7 @@ pub fn run() {
             let db = Db::init(&db_path).expect("failed to initialize local database");
 
             app.manage(db);
+            app.manage(sync::cloud_bridge::CloudBridge::default());
 
             // Cloud sync is manual-only. Do not start a background sync loop.
             // Scheduled local backups remain independent of synchronization.
@@ -80,6 +81,13 @@ pub fn run() {
             commands::reports::sales_mix,
             commands::reports::cash_flow_by_year,
             commands::dashboard::dashboard_summary,
+            commands::cloud_sync::cloud_sync_configuration,
+            commands::cloud_sync::cloud_sync_begin,
+            commands::cloud_sync::cloud_sync_pending,
+            commands::cloud_sync::cloud_sync_acknowledge,
+            commands::cloud_sync::cloud_sync_cursor,
+            commands::cloud_sync::cloud_sync_apply,
+            commands::cloud_sync::cloud_sync_end,
             commands::settings::get_settings,
             commands::settings::get_installation_id,
             commands::settings::update_general_settings,
