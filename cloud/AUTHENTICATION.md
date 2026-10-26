@@ -1,5 +1,9 @@
 # Task 35 authentication and trusted provisioning
 
+Current progress and release disposition: see [Project status](../Project%20status.md)
+and [Production readiness](PRODUCTION_READINESS.md). Later-task references below
+describe the state when this milestone was introduced.
+
 Source implementation is ready for review. No live credentials, migrations,
 identity-provider configuration or deployments have been applied. Upload and
 pull return HTTP 501 by default after successful authentication/session validation.

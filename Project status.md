@@ -1,68 +1,59 @@
 # Natra Restaurant — Project Status
 
-Updated: 26 October 2026
+Updated: 26 October 2026 (Africa/Addis_Ababa)
 
 Branch: `feature/neon-sync-installation-id`
+Review: [PR #10](https://github.com/hayal05/Natra-restaurant/pull/10), unmerged.
 
-## Implemented source work
+## Source progress
 
-- Tasks 1–35: implemented foundations, identity mapping, transactional local
-  replay, staged manual exchange, authentication and trusted provisioning.
-- Task 36: atomic session-scoped upload API and staged desktop fetch uploader.
-  Server upload commit: `c5ad501` (Windows CI passed before the desktop piece).
-  Desktop receipt handling and transport are included.
-- Task 37: scoped incremental download, bounded lookahead pagination, exact
-  cursor strings and staged desktop page-apply transport are implemented.
-- Task 38: manual header coordinator, gated IPC callbacks, shared exchange
-  guard, session completion/failure and exact-origin CORS are implemented.
-- Task 39: authoritative per-installation allowance, EAT day boundaries,
-  post-lock timing and last-confirmed header allowance are implemented.
-- Task 40: offline detection, propagated cancellation and manual-only recovery
-  retain pending events and durable cursors without background retry loops.
-- Task 41: two independent SQLite installations exercise real checkout, stable
-  identity mapping, settlement, own echoes, stale-page rejection and restart.
-- Task 42: scoped security/reliability review and panic recovery for abandoned
-  manual exchange leases; findings are in `cloud/SECURITY_RELIABILITY_AUDIT.md`.
-
-The uploader preserves stable outbox IDs, bounds batch/request sizes, validates
-receipts against the exact submitted snapshot, and acknowledges only committed
-batches. Tests cover a response lost after commit and a retry without duplicate
-ledger entries. Existing local financial calculations are unchanged.
-
-## Remaining work
-
-| Task | Scope | Status |
+| Tasks | Delivered source work | State |
 | --- | --- | --- |
-| 37 | Incremental download | Source implemented |
-| 38 | Manual Sync Now source integration behind closed release gates | Source implemented |
-| 39 | Daily synchronization limit integration | Source implemented |
-| 40 | Network recovery | Source implemented |
-| 41 | Multi-device testing | Source implemented |
-| 42 | Security and reliability audit | Source audit and recovery fix implemented |
-| 43 | Production readiness | Next; activation blocked |
+| 1–35 | Installation identity, local outbox/replay, financial identity mapping, staged exchange, authentication and trusted provisioning | Implemented; Windows CI passed |
+| 36 | Atomic scoped upload and validated desktop receipts | Implemented; Windows CI passed |
+| 37 | Bounded incremental download and exact sequence cursors | Implemented; Windows CI passed |
+| 38 | Explicit manual coordinator, gated native callbacks, shared lease, completion/failure and exact-origin CORS | Implemented; Windows CI passed |
+| 39 | Server-authoritative per-installation allowance and EAT boundaries | Implemented; Windows CI passed |
+| 40 | Offline detection, propagated cancellation and manual recovery | Implemented; Windows CI passed |
+| 41 | Two independent SQLite installations: checkout, differing IDs, settlement, echoes and restart | Implemented; Windows CI passed |
+| 42 | Scoped audit and abandoned-lease recovery after panic | Implemented; Windows CI passed |
+| 43 | Release evidence, acceptance gates and rollout/recovery handoff | Source packet complete; production acceptance blocked |
 
-## Validation
+Tasks 1–43 have source work or handoff material recorded. This does **not** mean
+live production synchronization is ready. See
+[Production readiness](cloud/PRODUCTION_READINESS.md) for the commit/build ledger
+and remaining acceptance gates, and
+[Security/reliability audit](cloud/SECURITY_RELIABILITY_AUDIT.md) for findings.
 
-The local API/client/database suite has 101 passing tests. Embedded PostgreSQL,
-generated test keys and mocked HTTP are used; no live database is contacted.
-Windows CI runs these tests, Rust tests and both MSI/NSIS builds for each source
-change. Tasks 40 and 41 Windows CI passed (`40352364014`, `40363603378`). The Actions
-result for the exact commit is authoritative; Task 42 must pass CI before Task 43.
+## Verification
 
-Task 41 uses actual SQLite databases and services with an in-process ordered
-ledger fixture. It does not replace hardware or multi-connection PostgreSQL
-concurrency testing; those remain required before live activation.
+Task 42 commit `1219c6e` passed Windows CI run `40364954977`: 101 Node tests,
+170 Rust unit tests, MSI and NSIS builds. One illustrative Rust doc test is
+ignored. Task 41 passed run `40363603378`; Task 40 passed `40352364014`.
+The final Task 43 documentation commit also requires a green Windows workflow;
+consult the exact commit's Actions result when selecting the latest build.
 
-## Operating state
+Tests use generated keys, mocked HTTP, embedded PostgreSQL and real local
+SQLite databases. Task 41's ordered ledger is an in-process fixture. These
+results do not establish live multi-connection PostgreSQL behavior, actual
+two-device Windows operation or production security acceptance.
 
-- Live synchronization is disabled; no upload flag is set in deployment config.
-- The header has manual coordinator wiring; the backend release gate is false
-  and configuration returns None, so no live network exchange can start.
-- Approved host provisioning, role binding and fresh token delivery remain pending.
+Stable event IDs, committed upload acknowledgements and atomic local
+financial-row/receipt/cursor replay remain in place. Offline operation and
+existing local financial calculations are preserved. No background sync was
+introduced.
+
+## Live state and blockers
+
+- `LIVE_NEON_SYNC_ENABLED` remains false; new native writes reject and
+  configuration returns None. All four Worker enablement flags remain absent.
+- Secure fresh-token delivery/renewal and native user/role binding are pending.
+- WebView/CSP/IPC review, financial-conflict resolution, rejected-event repair,
+  least-privilege grants and operational/concurrency evidence are pending.
 - No cloud migrations, live credentials, signing keys or services were applied.
 - Nothing was merged into main or deployed to production.
-- Production configuration and live/concurrency checks remain pending.
 
-Continue subtasks sequentially, commit each and verify Windows CI before moving
-on. Preserve financial behavior and offline operation. Merging main, deploying
-or enabling live synchronization requires explicit user approval.
+The next work is resolving the listed production blockers and collecting
+staging acceptance evidence. Continue code work with separate commits and
+Windows CI. Merge, deployment, live SQL/configuration and activation require
+explicit authorization; they were not performed by Tasks 41–43.

@@ -1,5 +1,9 @@
 # Task 38 — manual Sync Now integration
 
+Current progress and release disposition: see [Project status](../Project%20status.md)
+and [Production readiness](PRODUCTION_READINESS.md). Later-task references below
+describe the state when this milestone was introduced.
+
 ## Manual exchange
 
 The header's existing Sync Now button is wired to a single coordinator. Merely
