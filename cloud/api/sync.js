@@ -47,6 +47,13 @@ export async function handleSyncRequest(request, env = {}) {
       !uuid.test(identity.workspace_id) || !uuid.test(identity.installation_id)) {
     return json(403, "forbidden");
   }
+  // Require a verified sync session bound to the same authorized
+  // installation and workspace. Do not trust client-supplied session IDs.
+  if (identity.session_authorized !== true ||
+      typeof identity.session_id !== "string" ||
+      !uuid.test(identity.session_id)) {
+    return json(403, "sync_session_required");
+  }
   // Deliberately do not route to Neon until authorized session, scope,
   // and per-installation quota checks are integrated and tested.
   return json(501, "sync_endpoint_not_implemented");
