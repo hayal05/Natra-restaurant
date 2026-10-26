@@ -22,3 +22,6 @@ pub mod queue;
 pub mod turso;
 
 pub use manager::{run_once, SyncReport};
+
+#[cfg(test)]
+mod multi_device_tests;

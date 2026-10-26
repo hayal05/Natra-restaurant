@@ -19,6 +19,8 @@ Branch: `feature/neon-sync-installation-id`
   post-lock timing and last-confirmed header allowance are implemented.
 - Task 40: offline detection, propagated cancellation and manual-only recovery
   retain pending events and durable cursors without background retry loops.
+- Task 41: two independent SQLite installations exercise real checkout, stable
+  identity mapping, settlement, own echoes, stale-page rejection and restart.
 
 The uploader preserves stable outbox IDs, bounds batch/request sizes, validates
 receipts against the exact submitted snapshot, and acknowledges only committed
@@ -33,8 +35,8 @@ ledger entries. Existing local financial calculations are unchanged.
 | 38 | Manual Sync Now source integration behind closed release gates | Source implemented |
 | 39 | Daily synchronization limit integration | Source implemented |
 | 40 | Network recovery | Source implemented |
-| 41 | Multi-device testing | Next |
-| 42 | Security and reliability audit | Pending |
+| 41 | Multi-device testing | Source implemented |
+| 42 | Security and reliability audit | Next |
 | 43 | Production readiness | Pending |
 
 ## Validation
@@ -42,8 +44,12 @@ ledger entries. Existing local financial calculations are unchanged.
 The local API/client/database suite has 101 passing tests. Embedded PostgreSQL,
 generated test keys and mocked HTTP are used; no live database is contacted.
 Windows CI runs these tests, Rust tests and both MSI/NSIS builds for each source
-change. The Actions result for the exact commit is authoritative; Task 40 must pass
-Windows CI before starting Task 41.
+change. Task 40 Windows CI passed (`40352364014`). The Actions result for the
+exact commit is authoritative; Task 41 must pass Windows CI before Task 42.
+
+Task 41 uses actual SQLite databases and services with an in-process ordered
+ledger fixture. It does not replace hardware or multi-connection PostgreSQL
+concurrency testing; those remain required before live activation.
 
 ## Operating state
 
