@@ -1,9 +1,11 @@
+import { createBatchUploader } from "../db/upload.js";
+import { handleUploadRequest } from "./upload.js";
 import { configuredAuthVerifier } from "../auth/jwt.js";
 import { createNeonSessionValidator } from "../db/neon-session.js";
 
 // Task 35: secure-by-default entry point for the future sync API.
 // Authentication and workspace authorization precede every Neon query.
-// This handler validates sessions but never processes financial events.
+// Upload remains disabled unless explicitly enabled by server configuration.
 const headers = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -81,18 +83,26 @@ export async function handleSyncRequest(request, env = {}) {
   if (typeof validateSession !== "function") {
     return json(503, "sync_session_validation_not_configured");
   }
+  const scope = Object.freeze({workspace_id:identity.workspace_id,
+    installation_id:identity.installation_id,session_id:identity.session_id});
   let sessionValid;
   try {
-    sessionValid = await validateSession(Object.freeze({
-      workspace_id: identity.workspace_id,
-      installation_id: identity.installation_id,
-      session_id: identity.session_id,
-    }));
+    sessionValid = await validateSession(scope);
   } catch {
     return json(503, "sync_session_validation_unavailable");
   }
   if (sessionValid !== true) return json(403, "sync_session_required");
-  // Financial endpoints remain disabled until transaction-scoped session,
-  // event authorization and quota enforcement are integrated and tested.
+  // The flag is intentionally absent from deployment configuration. Setting
+  // it in a live environment requires the user's separate approval.
+  if (path === "/sync/upload" && env.SYNC_UPLOAD_ENABLED === "true") {
+    let upload = env.SYNC_BATCH_UPLOADER;
+    if (upload === undefined) {
+      try { upload = createBatchUploader(env.NEON_DATABASE_URL); }
+      catch { return json(503,"upload_not_configured"); }
+    }
+    if (typeof upload !== "function") return json(503,"upload_not_configured");
+    return handleUploadRequest(request,scope,upload);
+  }
+  // Pull remains staged for Task 37. No live flag is configured here.
   return json(501, "sync_endpoint_not_implemented");
 }
