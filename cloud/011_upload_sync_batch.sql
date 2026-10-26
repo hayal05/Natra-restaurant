@@ -19,8 +19,10 @@ BEGIN
     IF p_events IS NULL OR jsonb_typeof(p_events) <> 'array' THEN
         RAISE EXCEPTION 'event array is required' USING ERRCODE='22023';
     END IF;
+    -- jsonb canonical text adds spaces; allow 2 MiB internally while the
+    -- HTTP boundary caps original request bytes at 1 MiB.
     IF jsonb_array_length(p_events) NOT BETWEEN 1 AND 500 OR
-       octet_length(p_events::text) > 1048576 THEN
+       octet_length(p_events::text) > 2097152 THEN
         RAISE EXCEPTION 'upload batch limit exceeded' USING ERRCODE='22023';
     END IF;
     -- Parse UUIDs before writing; case variants cannot bypass duplicate checks.

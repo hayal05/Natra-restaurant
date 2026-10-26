@@ -1,3 +1,4 @@
+import {uploadPendingBatch} from "../../src/js/sync/cloud_upload.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
@@ -118,6 +119,35 @@ test("atomic batch upload uses active scoped sessions in embedded PostgreSQL",as
       assert.equal(await count(),1);
     });
 
+    await scenario("desktop retry after a lost committed response creates no duplicate events",async () => {
+      const events = [event(),event()];
+      let pending = events;
+      let attempts=0;
+      let acknowledgements=0;
+      const config={endpoint:"https://sync.example.test/sync/upload",token:"test",
+        installationId:scope.installation_id,readPending:async () => pending,
+        fetchImpl:async (url,options) => {
+          const result = await worker.fetch(new Request(url,options),env(upload));
+          assert.equal(result.status,200);
+          if (++attempts===1) throw new Error("response lost after commit");
+          return result;
+        },
+        acknowledge:async ids => {
+          acknowledgements++;
+          assert.deepEqual(ids,events.map(e => e.event_id));
+          pending=pending.filter(e => !ids.includes(e.event_id));
+        },
+      };
+      await assert.rejects(() => uploadPendingBatch(config),/retain pending/);
+      assert.equal(await count(),2);
+      assert.equal(acknowledgements,0);
+      assert.equal(pending.length,2);
+      assert.deepEqual(await uploadPendingBatch(config),{uploaded:2});
+      assert.equal(await count(),2);
+      assert.equal(pending.length,0);
+      assert.equal(acknowledgements,1);
+    });
+
     await scenario("PUBLIC cannot execute the batch routine",async () => {
       await db.exec("CREATE ROLE untrusted_upload_test");
       const result = await db.query("SELECT has_function_privilege('untrusted_upload_test','public.upload_sync_batch(uuid,uuid,uuid,jsonb)','EXECUTE') AS allowed");
@@ -175,4 +205,109 @@ test("network failures return no acknowledgements or secret details",async () =>
   const response = await worker.fetch(request({events:[event()]}),env(async () => {throw new Error("private connection string");}));
   assert.equal(response.status,503);
   assert.deepEqual(await response.json(),{error:"upload_unavailable"});
+});
+
+
+const clientConfig = overrides => ({endpoint:"https://sync.example.test/sync/upload",token:"test",
+  installationId:scope.installation_id,...overrides});
+const reply = events => ({acknowledged_event_ids:events.map(e => e.event_id),
+  receipts:events.map((e,i) => ({event_id:e.event_id,sequence_id:String(i+1)}))});
+const response = body => new Response(JSON.stringify(body),{status:200,headers:{"content-type":"application/json"}});
+
+test("desktop uploader sends a stable snapshot and acknowledges only its validated receipt",async () => {
+  const pending = [event(),event()];
+  const sent = JSON.parse(JSON.stringify(pending));
+  let ack;
+  const result = await uploadPendingBatch(clientConfig({
+    readPending:async limit => {assert.equal(limit,500);return pending;},
+    fetchImpl:async (url,options) => {
+      assert.equal(url,"https://sync.example.test/sync/upload");
+      assert.equal(options.redirect,"error");
+      assert.equal(options.credentials,"omit");
+      assert.equal(options.headers.authorization,"Bearer test");
+      assert.ok(options.signal instanceof AbortSignal);
+      assert.deepEqual(JSON.parse(options.body),{events:sent});
+      pending[0].payload.changedLater = true;
+      pending.push(event());
+      return response(reply(sent));
+    },
+    acknowledge:async ids => {ack=ids;},
+  }));
+  assert.deepEqual(result,{uploaded:2});
+  assert.deepEqual(ack,sent.map(e => e.event_id));
+  assert.equal(pending.length,3);
+});
+
+test("desktop uploader preserves pending events after rejected or ambiguous replies",async () => {
+  const events = [event(),event()];
+  const valid = reply(events);
+  const invalid = [
+    {...valid,acknowledged_event_ids:[events[0].event_id]},
+    {...valid,acknowledged_event_ids:[events[0].event_id,other]},
+    {...valid,receipts:[valid.receipts[0],{...valid.receipts[1],event_id:other}]},
+    {...valid,receipts:[valid.receipts[0],{...valid.receipts[1],sequence_id:"1"}]},
+    {...valid,receipts:[valid.receipts[0],{...valid.receipts[1],sequence_id:"9223372036854775808"}]},
+    {...valid,extra:"unexpected"},
+  ];
+  let acks = 0;
+  for (const bad of invalid) {
+    await assert.rejects(() => uploadPendingBatch(clientConfig({readPending:async () => events,
+      acknowledge:async () => {acks++;},fetchImpl:async () => response(bad)})),/retain pending/);
+  }
+  for (const fetchImpl of [
+    async () => {throw new Error("private URL and token");},
+    async () => new Response("private server details",{status:503}),
+    async () => new Response("not-json",{status:200,headers:{"content-type":"application/json"}}),
+    async () => new Response(" ".repeat(262145),{status:200,headers:{"content-type":"application/json"}}),
+  ]) {
+    await assert.rejects(() => uploadPendingBatch(clientConfig({readPending:async () => events,
+      acknowledge:async () => {acks++;},fetchImpl})),error => {
+      assert.doesNotMatch(error.message,/private URL|private server/);return true;
+    });
+  }
+  assert.equal(acks,0);
+});
+
+test("desktop uploader bounds oldest-first batches and refuses an oversized first event",async () => {
+  const events = Array.from({length:3},() => ({...event(),payload:{text:"x".repeat(400000)}}));
+  let submitted;
+  const result = await uploadPendingBatch(clientConfig({readPending:async () => events,
+    fetchImpl:async (url,options) => {
+      assert.ok(new TextEncoder().encode(options.body).byteLength<=MAX_UPLOAD_BYTES);
+      const sent = JSON.parse(options.body).events;
+      assert.deepEqual(sent,events.slice(0,2));
+      return response(reply(sent));
+    },acknowledge:async ids => {submitted=ids;}}));
+  assert.equal(result.uploaded,2);
+  assert.deepEqual(submitted,events.slice(0,2).map(e => e.event_id));
+  let network=0;
+  await assert.rejects(() => uploadPendingBatch(clientConfig({readPending:async () => [{...event(),payload:{text:"x".repeat(MAX_UPLOAD_BYTES)}}],
+    fetchImpl:async () => {network++;},acknowledge:async () => {throw new Error("must not acknowledge");}})),/exceeds batch limit/);
+  assert.equal(network,0);
+});
+
+test("desktop retries reuse original event IDs after local acknowledgement failure",async () => {
+  const events = [event()];
+  const bodies = [];
+  let attempts=0;
+  const config = clientConfig({readPending:async () => events,
+    fetchImpl:async (url,options) => {bodies.push(options.body);return response(reply(events));},
+    acknowledge:async () => {if (++attempts===1) throw new Error("SQLite transaction failed");}});
+  await assert.rejects(() => uploadPendingBatch(config));
+  assert.deepEqual(await uploadPendingBatch(config),{uploaded:1});
+  assert.equal(bodies[0],bodies[1]);
+});
+
+test("desktop upload configuration rejects credential redirects and empty queues do not fetch",async () => {
+  let calls=0;
+  const config=clientConfig({readPending:async () => [],acknowledge:async () => {calls++;},fetchImpl:async () => {calls++;}});
+  for (const change of [
+    {endpoint:"http://sync.example.test/sync/upload"},{endpoint:"https://user:password@sync.example.test/sync/upload"},
+    {endpoint:"https://sync.example.test/sync/upload?token=secret"},{endpoint:"https://sync.example.test/elsewhere"},
+    {token:"token\nInjected: header"},{installationId:"bad"},
+  ]) await assert.rejects(() => uploadPendingBatch({...config,...change}));
+  assert.deepEqual(await uploadPendingBatch(config),{uploaded:0});
+  assert.equal(calls,0);
+  const html = await readFile(new URL("../../src/index.html",import.meta.url),"utf8");
+  assert.doesNotMatch(html,/cloud_upload\.js/);
 });

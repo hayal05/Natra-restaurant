@@ -38,8 +38,10 @@ for a later retry. The ledger may already have committed, so never manufacture
 new IDs for a retry. Sequence gaps after a rolled-back transaction are normal.
 
 The existing source outbox reads oldest-first and marks only acknowledged IDs
-synced. Desktop HTTP transport/receipt validation is the next Task 36 piece;
-connecting the user-facing Sync Now action remains Task 38.
+synced. The staged WebView fetch transport validates every receipt against the exact
+submitted batch before calling its acknowledgement callback. Connecting these
+callbacks to the Tauri outbox commands and user-facing Sync Now action remains
+Task 38. No script is loaded into index.html and no request starts automatically.
 
 ## Deployment and tests
 
@@ -52,3 +54,30 @@ Tests execute the actual routine in ephemeral embedded PostgreSQL and exercise
 API limits, committed receipts, retry safety, transactional rollback, scope,
 revocation and SQL permissions. They do not establish real multi-connection
 concurrency behavior; that remains later multi-device/reliability testing.
+
+## Staged desktop transport
+
+`src/js/sync/cloud_upload.js` exposes `uploadPendingBatch` for Task 38 to call
+with explicit HTTPS endpoint, bearer token, installation ID and durable
+`readPending`/`acknowledge` callbacks. The callbacks must wrap the existing
+SQLite `read_pending_uploads` and atomic `acknowledge_uploads` helpers; no
+replacement queue/storage is introduced here. WebView origin/CORS and credential
+provisioning are also part of the later connection/configuration work.
+
+It snapshots at most 500 oldest-first events, fits the request within 1 MiB,
+and refuses to skip an oversized first event. Empty queues make no request.
+Fetch omits cookies, rejects redirects, has a 30-second cancellation timeout
+and bounds response reads to 256 KiB. Receipts must match the exact submitted
+IDs in order, include valid 64-bit sequence strings and contain no duplicates.
+A failed request, malformed/partial receipt or failed local acknowledgement
+leaves the same IDs available for retry. API errors are surfaced generically.
+
+Envelope validation is shared between client and server without importing any
+Neon or issuer code into the desktop. The SQL routine permits 2 MiB of canonical
+jsonb text because PostgreSQL formatting adds spaces; the HTTP/client request
+limit remains 1 MiB. This avoids rejecting a valid compact request solely for
+canonical formatting overhead.
+
+The integration test sends the desktop request through the API into embedded
+PostgreSQL, loses the first response after commit, then retries the unchanged
+IDs and confirms that exactly one copy of each event exists.
