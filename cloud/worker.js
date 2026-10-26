@@ -1,9 +1,11 @@
 import { handleHealth } from "./api/health.js";
+import { handleSyncRequest } from "./api/sync.js";
 
-// Cloudflare Workers adapter. Reuses the provider-neutral handler without
-// starting an always-on backend or connecting to Neon.
+// Sync requests are fail-closed. No database transport is enabled.
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
+    const path = new URL(request.url).pathname;
+    if (path.startsWith("/sync/")) return handleSyncRequest(request, env);
     return handleHealth(request);
   },
 };
