@@ -18,7 +18,19 @@ pub(crate) struct Lease { exchange_id: String, installation_id: String }
 fn invalid() -> AppError { AppError::Sync("manual cloud exchange is unavailable or expired".into()) }
 impl CloudBridge {
     fn state(&self) -> AppResult<std::sync::MutexGuard<'_, Option<Active>>> {
-        let mut state = self.active.lock().map_err(|_| invalid())?;
+        let mut state = match self.active.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                // A panic invalidates the volatile lease/snapshot, not SQLite's
+                // committed rows. Drop the abandoned lease to release SyncGuard;
+                // stale callbacks must fail instead of continuing uncertain work.
+                let mut state = poisoned.into_inner();
+                state.take();
+                self.active.clear_poison();
+                eprintln!("[sync] discarded an abandoned manual exchange after a panic");
+                state
+            }
+        };
         if state.as_ref().map(|s| Instant::now() >= s.expires).unwrap_or(false) {
             state.take();
         }
@@ -76,6 +88,30 @@ impl CloudBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn poisoned_lease_releases_shared_guard_and_rejects_stale_callbacks() {
+        let _serial = super::super::manager::SYNC_TEST_LOCK.lock().unwrap();
+        let db = crate::database::Db::init_in_memory().unwrap();
+        let mut conn = db.lock();
+        let bridge = std::sync::Arc::new(CloudBridge::default());
+        let abandoned = bridge.begin(&conn).unwrap();
+        let poisoned = bridge.clone();
+        assert!(std::thread::spawn(move || {
+            let _state = poisoned.active.lock().unwrap();
+            panic!("simulate a command panic while holding its volatile lease");
+        }).join().is_err());
+        assert!(bridge.active.is_poisoned());
+        assert!(bridge.pending(&abandoned.exchange_id, &conn).is_err());
+        assert!(!bridge.active.is_poisoned());
+        assert!(bridge.acknowledge(&abandoned.exchange_id, &mut conn, &["stale".into()]).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(), 0);
+        let recovered = bridge.begin(&conn).unwrap();
+        assert_ne!(recovered.exchange_id, abandoned.exchange_id);
+        assert!(bridge.end(&abandoned.exchange_id).is_err());
+        bridge.end(&recovered.exchange_id).unwrap();
+        // Recovery also released the same guard used by the legacy adapter.
+        assert!(SyncGuard::acquire().is_some());
+    }
     #[test]
     fn closed_release_and_exact_local_exchange_callbacks() {
         let _serial = super::super::manager::SYNC_TEST_LOCK.lock().unwrap();
