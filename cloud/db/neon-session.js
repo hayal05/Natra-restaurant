@@ -19,14 +19,18 @@ FOR SHARE OF d, s;`;
 // Server-only adapter. Construction does not contact Neon; only an already
 // authenticated request may invoke the returned validator. Never send this
 // connection string or this module to the desktop/browser application.
-export function createNeonSessionValidator(connectionString, createSql = neon) {
+export function createNeonClient(connectionString, createSql = neon) {
   const url = new URL(connectionString);
   if (!["postgres:", "postgresql:"].includes(url.protocol) ||
       !url.hostname.endsWith(".neon.tech") || !url.username || !url.password ||
       url.pathname.length < 2 || (url.port && url.port !== "5432")) {
     throw new Error("Invalid Neon configuration");
   }
-  const sql = createSql(connectionString);
+  return createSql(connectionString);
+}
+
+export function createNeonSessionValidator(connectionString, createSql = neon) {
+  const sql = createNeonClient(connectionString, createSql);
   return async ({workspace_id, installation_id, session_id}) => {
     const rows = await sql.query(VALIDATE_SESSION_SQL,
       [workspace_id, installation_id, session_id],

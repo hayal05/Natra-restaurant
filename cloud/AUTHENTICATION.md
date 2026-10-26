@@ -39,3 +39,26 @@ remain available for trusted server composition and tests; request fields
 cannot set them. Production selection/configuration of an issuer and its
 secure enrollment/token-issuance flow remains pending. Tests use generated
 keys and mocked HTTP; no live identity provider or Neon database was contacted.
+
+## Trusted device enrollment
+
+`009_enroll_sync_device.sql` adds `public.enroll_sync_device(workspace,
+installation)`. Apply it only after schema review and separate authorization
+for cloud changes. It has not been applied to Neon by this implementation.
+
+The server-only `createDeviceEnroller` helper calls this function with bound
+parameters. A trusted administrator must authorize the target workspace
+before calling the helper. No HTTP enrollment route, public registration,
+or automatic client enrollment is enabled.
+
+Enrollment is idempotent for an active installation in the same workspace.
+It preserves the existing registration timestamp, refuses cross-workspace
+reassignment, and refuses to reactivate a deactivated device. The routine
+runs with the caller's permissions; PUBLIC receives no execution grant.
+Grant access only to a trusted provisioning role when that role is defined.
+
+`cloud/tests/enrollment.test.js` executes the schema, enrollment routine and
+session validation query in ephemeral embedded PostgreSQL (PGlite, a test-only
+dependency). It checks scope, device status, session lifecycle and function
+permissions. These tests do not demonstrate production concurrency behavior.
+Administrative entry-point integration and token issuance remain pending.

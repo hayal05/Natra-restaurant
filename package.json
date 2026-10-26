@@ -10,6 +10,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@tauri-apps/cli": "2.11.5"
   },
   "dependencies": {
