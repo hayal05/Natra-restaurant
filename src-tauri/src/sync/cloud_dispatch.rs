@@ -16,6 +16,101 @@ pub(crate) struct DownloadedEvent {
     pub payload: serde_json::Value,
 }
 
+/// Transport-independent payload from the cloud event ledger.
+/// The actual HTTP API is intentionally a later, separately authorized task.
+#[derive(Debug, Deserialize)]
+pub(crate) struct SequencedDownload {
+    pub event_id: String,
+    pub sequence_id: i64,
+    #[serde(flatten)]
+    pub event: DownloadedEvent,
+}
+
+/// Apply a downloaded page atomically. A failure retains both the old
+/// cursor and all business rows so a later manual retry is safe.
+#[allow(dead_code)]
+pub(crate) fn apply_download_page(
+    conn: &mut rusqlite::Connection,
+    events: &[SequencedDownload],
+) -> AppResult<usize> {
+    let metadata: Vec<(&str, i64)> = events.iter()
+        .map(|event| (event.event_id.as_str(), event.sequence_id))
+        .collect();
+    crate::database::connection::apply_cloud_event_batch(
+        conn, &metadata,
+        |tx, _, seq| {
+            let index = metadata.binary_search_by_key(&seq, |(_, n)| *n)
+                .map_err(|_| AppError::Validation("unmatched cloud sequence".into()))?;
+            dispatch(tx, &events[index].event)
+        },
+    )?;
+    Ok(events.len())
+}
+
+/// Snapshot the locally committed upload queue oldest first.
+/// Do not mark a record as uploaded until its cloud receipt is confirmed.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct PendingUpload {
+    pub event_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub operation: String,
+    pub payload: serde_json::Value,
+}
+
+#[allow(dead_code)]
+pub(crate) fn read_pending_uploads(
+    conn: &rusqlite::Connection,
+    limit: i64,
+) -> AppResult<Vec<PendingUpload>> {
+    if !(1..=500).contains(&limit) {
+        return Err(AppError::Validation("invalid cloud upload batch size".into()));
+    }
+    let mut stmt = conn.prepare(
+        "SELECT event_id,entity_type,entity_id,operation,payload
+         FROM cloud_outbox WHERE status='pending'
+         ORDER BY created_at ASC,rowid ASC LIMIT ?1"
+    )?;
+    let rows = stmt.query_map([limit], |row| {
+        let payload: String = row.get(4)?;
+        let payload = serde_json::from_str(&payload).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4, rusqlite::types::Type::Text, Box::new(err)
+            )
+        })?;
+        Ok(PendingUpload {
+            event_id: row.get(0)?,
+            entity_type: row.get(1)?,
+            entity_id: row.get(2)?,
+            operation: row.get(3)?,
+            payload,
+        })
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Accept only explicit server-acknowledged IDs, never an entire batch
+/// on a partial or failed upload response.
+#[allow(dead_code)]
+pub(crate) fn acknowledge_uploads(
+    conn: &mut rusqlite::Connection,
+    acknowledged: &[String],
+) -> AppResult<()> {
+    let tx = conn.transaction()?;
+    for event_id in acknowledged {
+        let changed = tx.execute(
+            "UPDATE cloud_outbox SET status='synced'
+             WHERE event_id=?1 AND status='pending'",
+            [event_id],
+        )?;
+        if changed != 1 {
+            return Err(AppError::Validation("unknown or previously acknowledged cloud event".into()));
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Reject unsupported events rather than advancing the cursor without applying them.
 #[allow(dead_code)]
 pub(crate) fn dispatch(tx: &Transaction<'_>, event: &DownloadedEvent) -> AppResult<()> {
@@ -572,6 +667,47 @@ mod tests {
             &conn,"categories","device-c:category").unwrap(),None);
         assert!(!connection::is_cloud_event_applied(&conn,"category-event-3").unwrap());
         assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+    }
+
+    #[test]
+    fn task34_pipeline_stages_uploads_and_applies_ordered_pages_atomically() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        {
+            let tx = conn.transaction().unwrap();
+            crate::sync::queue::enqueue_cloud_event(
+                &tx,"categories","local:1","upsert",
+                &serde_json::json!({"name":"Local"}),
+            ).unwrap();
+            tx.commit().unwrap();
+        }
+        let staged=read_pending_uploads(&conn,10).unwrap();
+        assert_eq!(staged.len(),1);
+        assert_eq!(staged[0].entity_id,"local:1");
+        assert_eq!(read_pending_uploads(&conn,10).unwrap().len(),1);
+        acknowledge_uploads(&mut conn,&[staged[0].event_id.clone()]).unwrap();
+        assert!(read_pending_uploads(&conn,10).unwrap().is_empty());
+        let remote=SequencedDownload {
+            event_id:"remote-event-1".into(),sequence_id:1,
+            event:DownloadedEvent {
+                entity_type:"categories".into(),entity_id:"remote:1".into(),
+                operation:"upsert".into(),
+                payload:serde_json::json!({"name":"Remote","description":null}),
+            },
+        };
+        assert_eq!(apply_download_page(&mut conn,&[remote]).unwrap(),1);
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        let invalid=SequencedDownload {
+            event_id:"remote-event-2".into(),sequence_id:2,
+            event:DownloadedEvent {
+                entity_type:"unsupported".into(),entity_id:"remote:2".into(),
+                operation:"upsert".into(),payload:serde_json::json!({}),
+            },
+        };
+        assert!(apply_download_page(&mut conn,&[invalid]).is_err());
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+        assert!(!connection::is_cloud_event_applied(&conn,"remote-event-2").unwrap());
     }
 
     #[test]
