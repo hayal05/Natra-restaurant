@@ -1,6 +1,8 @@
+import { createNeonSessionValidator } from "../db/neon-session.js";
+
 // Task 35: secure-by-default entry point for the future sync API.
-// Authentication and workspace authorization must be verified before any
-// Neon query is connected. This handler never processes financial events.
+// Authentication and workspace authorization precede every Neon query.
+// This handler validates sessions but never processes financial events.
 const headers = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -59,13 +61,22 @@ export async function handleSyncRequest(request, env = {}) {
   // Authentication claims alone cannot establish that a session is still
   // running. The server adapter must revalidate against current database
   // state using queries/validate_sync_session.sql and these verified IDs.
-  // A future operation must share the validator's database transaction.
-  if (typeof env.SYNC_SESSION_VALIDATOR !== "function") {
+  // Future operations must revalidate inside their own database transaction.
+  let validateSession = env.SYNC_SESSION_VALIDATOR;
+  // Explicit invalid overrides fail closed instead of falling back silently.
+  if (validateSession === undefined && env.NEON_DATABASE_URL) {
+    try {
+      validateSession = createNeonSessionValidator(env.NEON_DATABASE_URL);
+    } catch {
+      return json(503, "sync_session_validation_not_configured");
+    }
+  }
+  if (typeof validateSession !== "function") {
     return json(503, "sync_session_validation_not_configured");
   }
   let sessionValid;
   try {
-    sessionValid = await env.SYNC_SESSION_VALIDATOR(Object.freeze({
+    sessionValid = await validateSession(Object.freeze({
       workspace_id: identity.workspace_id,
       installation_id: identity.installation_id,
       session_id: identity.session_id,
@@ -74,7 +85,7 @@ export async function handleSyncRequest(request, env = {}) {
     return json(503, "sync_session_validation_unavailable");
   }
   if (sessionValid !== true) return json(403, "sync_session_required");
-  // Deliberately do not route to Neon until authorized session, scope,
-  // and per-installation quota checks are integrated and tested.
+  // Financial endpoints remain disabled until transaction-scoped session,
+  // event authorization and quota enforcement are integrated and tested.
   return json(501, "sync_endpoint_not_implemented");
 }

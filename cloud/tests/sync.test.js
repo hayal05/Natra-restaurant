@@ -202,3 +202,103 @@ test("unauthenticated or mismatched callers never reach session validation", asy
     assert.equal(calls, 0);
   }
 });
+
+// Neon transport is mocked: tests never use credentials or a live database.
+const {createNeonSessionValidator, VALIDATE_SESSION_SQL} = await import("../db/neon-session.js");
+const neonTestUrl = "postgresql://test:fake@ep-example.eu-central-1.aws.neon.tech/neondb";
+const sessionScope = {
+  workspace_id:verifiedIdentity.workspace_id,
+  installation_id:verifiedIdentity.installation_id,
+  session_id:verifiedIdentity.session_id,
+};
+
+test("Neon validator binds verified IDs and bounds network wait", async () => {
+  let calls = 0;
+  const validate = createNeonSessionValidator(neonTestUrl, (connectionString) => {
+    assert.equal(connectionString, neonTestUrl);
+    return {query:async (query, params, options) => {
+      calls++;
+      assert.equal(query, VALIDATE_SESSION_SQL);
+      assert.deepEqual(params, Object.values(sessionScope));
+      assert.ok(options.fetchOptions.signal instanceof AbortSignal);
+      return [sessionScope];
+    }};
+  });
+  assert.equal(calls, 0);
+  assert.equal(await validate(sessionScope), true);
+  assert.equal(calls, 1);
+});
+
+test("Neon validator denies absent, ambiguous, malformed and mismatched results", async () => {
+  for (const rows of [[], null, {}, [sessionScope,sessionScope], [{}],
+    [{...sessionScope,installation_id:"44444444-4444-4444-8444-444444444444"}],
+    [{...sessionScope,workspace_id:"44444444-4444-4444-8444-444444444444"}],
+    [{...sessionScope,session_id:"44444444-4444-4444-8444-444444444444"}]]) {
+    const validate = createNeonSessionValidator(neonTestUrl, () => ({query:async () => rows}));
+    assert.equal(await validate(sessionScope), false);
+  }
+});
+
+test("Neon query errors reach the API's fail-closed error handler", async () => {
+  const validate = createNeonSessionValidator(neonTestUrl, () => ({query:async () => {
+    throw new Error("private database details");
+  }}));
+  const response = await worker.fetch(req("Bearer token"), {
+    SYNC_AUTH_VERIFIER:async () => verifiedIdentity,
+    SYNC_SESSION_VALIDATOR:validate,
+  });
+  assert.equal(response.status,503);
+  assert.deepEqual(await response.json(),{error:"sync_session_validation_unavailable"});
+});
+
+test("invalid Neon settings are rejected before transport is constructed", async () => {
+  for (const url of ["bad", "https://example.com", "postgresql://u:p@localhost/db",
+    "postgresql://u:p@neon.tech.attacker.test/db", "postgresql://ep-example.aws.neon.tech/db",
+    "postgresql://u:p@ep-example.aws.neon.tech/", "postgresql://u:p@ep-example.aws.neon.tech:80/db"]) {
+    assert.throws(() => createNeonSessionValidator(url, () => {
+      assert.fail("invalid settings must not construct transport");
+    }));
+    const response = await worker.fetch(req("Bearer token"), {
+      SYNC_AUTH_VERIFIER:async () => verifiedIdentity,
+      NEON_DATABASE_URL:url,
+    });
+    assert.equal(response.status,503);
+    assert.deepEqual(await response.json(),{error:"sync_session_validation_not_configured"});
+  }
+});
+
+test("Neon validation query preserves canonical scope and lifecycle checks", async () => {
+  const {readFile} = await import("node:fs/promises");
+  const source = await readFile(new URL("../queries/validate_sync_session.sql",import.meta.url),"utf8");
+  assert.equal(VALIDATE_SESSION_SQL,source.slice(source.indexOf("SELECT ")).trim());
+});
+
+test("configured API uses the real Neon driver with mocked HTTP transport", async () => {
+  const {neonConfig} = await import("@neondatabase/serverless");
+  const originalFetch = neonConfig.fetchFunction;
+  let calls = 0;
+  neonConfig.fetchFunction = async (url, options) => {
+    calls++;
+    assert.equal(new URL(url).protocol,"https:");
+    const body = JSON.parse(options.body);
+    assert.equal(body.query,VALIDATE_SESSION_SQL);
+    assert.deepEqual(body.params,Object.values(sessionScope));
+    assert.ok(options.signal instanceof AbortSignal);
+    return new Response(JSON.stringify({
+      fields:Object.keys(sessionScope).map(name => ({name,dataTypeID:2950})),
+      rows:[Object.values(sessionScope)],
+      rowCount:1,command:"SELECT",rowAsArray:true,
+    }),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response = await worker.fetch(req("Bearer token"),{
+      SYNC_AUTH_VERIFIER:async () => verifiedIdentity,
+      NEON_DATABASE_URL:neonTestUrl,
+    });
+    assert.equal(response.status,501);
+    assert.deepEqual(await response.json(),{error:"sync_endpoint_not_implemented"});
+    assert.equal(calls,1);
+  } finally {
+    neonConfig.fetchFunction = originalFetch;
+  }
+});
