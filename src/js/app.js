@@ -3,7 +3,7 @@ import { createSyncNowController } from "./sync/sync_now.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
 import { renderNavItems, setActiveNavItem } from "./components/sidebar.js";
-import { setHeaderTitle, clearHeaderActions, setHeaderSyncStatus } from "./components/header.js";
+import { setHeaderTitle, clearHeaderActions, setHeaderSyncStatus, setHeaderSyncAllowance } from "./components/header.js";
 import { mountToastStack } from "./components/notification.js";
 
 const appRoot = document.getElementById("app");
@@ -21,7 +21,8 @@ function buildLayouts() {
   setHeaderSyncStatus(shell, "ready", false);
   const manualSync=createSyncNowController({bridge:api.cloudSync,
     getUserKey:()=>store.getState().user?.id??null,
-    onState:(status,available)=>setHeaderSyncStatus(shell,status,available)});
+    onState:(status,available)=>setHeaderSyncStatus(shell,status,available),
+    onAllowance:allowance=>setHeaderSyncAllowance(shell,allowance)});
   shell.querySelector("#header-sync-btn").addEventListener("click",async()=>{
     try {const report=await manualSync.run();if(report.ran)pushToast("Synchronization completed.","success");}
     catch {pushToast("Synchronization did not finish. Retry when ready.","error");}

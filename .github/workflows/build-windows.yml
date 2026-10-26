@@ -52,7 +52,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Test serverless API security and health
-        run: node --test cloud/tests/health.test.js cloud/tests/sync.test.js cloud/tests/enrollment.test.js cloud/tests/issuance.test.js cloud/tests/upload.test.js cloud/tests/pull.test.js cloud/tests/sync_now.test.js
+        run: node --test cloud/tests/health.test.js cloud/tests/sync.test.js cloud/tests/enrollment.test.js cloud/tests/issuance.test.js cloud/tests/upload.test.js cloud/tests/pull.test.js cloud/tests/sync_now.test.js cloud/tests/allowance.test.js
 
       - name: Run Rust tests
         working-directory: src-tauri

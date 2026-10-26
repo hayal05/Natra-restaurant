@@ -9,7 +9,7 @@ import worker from "../worker.js";
 const scope={workspace_id:"11111111-1111-4111-8111-111111111111",installation_id:"22222222-2222-4222-8222-222222222222",session_id:"33333333-3333-4333-8333-333333333333"};
 const other="44444444-4444-4444-8444-444444444444";
 const identity={...scope,authorized:true,session_authorized:true,session_workspace_id:scope.workspace_id,session_installation_id:scope.installation_id};
-const cfg={token:"e30."+Buffer.from(JSON.stringify({installation_id:scope.installation_id})).toString("base64url")+".test",uploadEndpoint:"https://sync.example.test/sync/upload",pullEndpoint:"https://sync.example.test/sync/pull",completeEndpoint:"https://sync.example.test/sync/complete",failEndpoint:"https://sync.example.test/sync/fail"};
+const cfg={token:"e30."+Buffer.from(JSON.stringify({installation_id:scope.installation_id})).toString("base64url")+".test",uploadEndpoint:"https://sync.example.test/sync/upload",pullEndpoint:"https://sync.example.test/sync/pull",completeEndpoint:"https://sync.example.test/sync/complete",failEndpoint:"https://sync.example.test/sync/fail",allowanceEndpoint:"https://sync.example.test/sync/allowance"};
 const json=body=>new Response(JSON.stringify(body),{headers:{"content-type":"application/json"}});
 const localEvent=()=>({event_id:crypto.randomUUID(),entity_type:"categories",entity_id:crypto.randomUUID(),operation:"upsert",payload:{name:"Local",origin_installation_id:scope.installation_id}});
 function harness(){
@@ -24,6 +24,7 @@ function harness(){
     end:async()=>{log.push("end");}};
   const fetchImpl=async(url,options)=>{
     const path=new URL(url).pathname;log.push(path);
+    if(path==="/sync/allowance")return json({daily_limit:10,completed_today:0,reserved_today:1,remaining_today:9,session_permitted:true,day:"2026-10-26",reset_at:"2026-10-26T21:00:00Z"});
     if(path==="/sync/upload"){
       const sent=JSON.parse(options.body).events;
       return json({acknowledged_event_ids:sent.map(e=>e.event_id),receipts:sent.map((e,i)=>({event_id:e.event_id,sequence_id:String(i+1)}))});
@@ -39,7 +40,7 @@ test("manual coordinator uploads, applies and confirms completion in order",asyn
   const h=harness();await h.controller.refresh();assert.equal(h.log.length,0);
   const result=await h.controller.run();
   assert.deepEqual(result,{ran:true,pushed:2,pulled:1});
-  assert.deepEqual(h.log,["begin","/sync/upload","ack","/sync/pull","apply","/sync/complete","end"]);
+  assert.deepEqual(h.log,["begin","/sync/allowance","/sync/upload","ack","/sync/pull","apply","/sync/complete","/sync/allowance","end"]);
   assert.equal(h.getPending().length,0);assert.equal(h.getCursor(),"9007199254740993");
   assert.deepEqual(h.states.at(-1),["completed",true]);
 });

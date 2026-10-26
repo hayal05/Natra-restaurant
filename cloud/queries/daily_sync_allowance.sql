@@ -1,3 +1,5 @@
+-- Historical completed-count report. Runtime allowance uses 014 and also
+-- accounts for the active session reservation; this query is not enforcement.
 -- Task 15: read-only daily sync allowance, per installation.
 -- PostgreSQL only; depends on cloud/003_sync_sessions.sql.
 -- Bind $1 to the authenticated installation UUID (not an arbitrary client ID).

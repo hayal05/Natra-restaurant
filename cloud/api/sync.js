@@ -1,3 +1,4 @@
+import { createAllowanceReader } from "../db/allowance.js";
 import { createSessionFinisher } from "../db/session-control.js";
 import { createEventPuller } from "../db/pull.js";
 import { handlePullRequest } from "./pull.js";
@@ -26,6 +27,7 @@ export async function handleSyncRequest(request, env = {}) {
     "/sync/pull": "GET",
     "/sync/complete": "POST",
     "/sync/fail": "POST",
+    "/sync/allowance": "GET",
   };
   if (!Object.hasOwn(supported, path)) return json(404, "not_found");
   if (request.method !== supported[path]) {
@@ -74,6 +76,15 @@ export async function handleSyncRequest(request, env = {}) {
   }
   const scope = Object.freeze({workspace_id:identity.workspace_id,
     installation_id:identity.installation_id,session_id:identity.session_id});
+  if (path === "/sync/allowance") {
+    if (env.SYNC_ALLOWANCE_ENABLED !== "true") return json(501,"sync_endpoint_not_implemented");
+    if (new URL(request.url).search) return json(400,"invalid_allowance_request");
+    let read = env.SYNC_ALLOWANCE_READER;
+    if (read === undefined) {try {read=createAllowanceReader(env.NEON_DATABASE_URL);}catch{return json(503,"allowance_not_configured");}}
+    if (typeof read !== "function") return json(503,"allowance_not_configured");
+    try{return new Response(JSON.stringify(await read(scope)),{status:200,headers});}
+    catch(error){return json(error?.code === "42501"?403:503,"allowance_unavailable");}
+  }
   if (path === "/sync/complete" || path === "/sync/fail") {
     if (env.SYNC_SESSION_CONTROL_ENABLED !== "true") return json(501,"sync_endpoint_not_implemented");
     // No caller-controlled scope or action body is accepted. Completion retries

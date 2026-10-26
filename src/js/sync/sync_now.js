@@ -1,3 +1,4 @@
+import {readAllowance} from "./allowance.js";
 import {uploadPendingBatch} from "./cloud_upload.js";
 import {downloadPage} from "./cloud_download.js";
 import {finishSession} from "./session_control.js";
@@ -14,12 +15,12 @@ function bindTokenToInstallation(token,installationId) {
 }
 
 // A manual coordinator; constructing/refreshing it never starts network I/O.
-export function createSyncNowController({bridge,getUserKey,onState=()=>{},fetchImpl=globalThis.fetch}) {
+export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllowance=()=>{},fetchImpl=globalThis.fetch}) {
   let running=false,generation=0;
   const emit=(status,available)=>onState(status,available);
   const validConfig=config=>{
     if(!config)return false;
-    const paths={uploadEndpoint:"upload",pullEndpoint:"pull",completeEndpoint:"complete",failEndpoint:"fail"};
+    const paths={uploadEndpoint:"upload",pullEndpoint:"pull",completeEndpoint:"complete",failEndpoint:"fail",allowanceEndpoint:"allowance"};
     const origins=new Set();
     for(const [key,action] of Object.entries(paths)) {
       const url=new URL(config[key]);
@@ -51,6 +52,9 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},fetchI
         current();emit("syncing",true);
         lease=await bridge.begin();current();
         bindTokenToInstallation(config.token,lease.installation_id);tokenBound=true;
+        const allowance=await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl});
+        onAllowance(allowance);
+        if(!allowance.session_permitted)throw new Error("No permitted daily sync session");
         // The backend lease fixes an initial rowid cutoff. Concurrent local
         // writes retain new IDs for the next manual cycle.
         for(let batch=0;;batch++) {
@@ -74,7 +78,9 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},fetchI
           if(!result.has_more)break;
         }
         current();await finishSession({endpoint:config.completeEndpoint,token:config.token,action:"complete",fetchImpl});
-        completed=true;await bridge.end(lease.exchange_id);lease=null;current();emit("completed",true);
+        completed=true;
+        onAllowance(await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl}));
+        await bridge.end(lease.exchange_id);lease=null;current();emit("completed",true);
         return {ran:true,pushed,pulled};
       }catch{
         if(lease && config && tokenBound && !completed){try{await finishSession({endpoint:config.failEndpoint,token:config.token,action:"fail",fetchImpl});}catch{}}

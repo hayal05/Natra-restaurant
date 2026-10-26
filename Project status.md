@@ -15,6 +15,8 @@ Branch: `feature/neon-sync-installation-id`
   cursor strings and staged desktop page-apply transport are implemented.
 - Task 38: manual header coordinator, gated IPC callbacks, shared exchange
   guard, session completion/failure and exact-origin CORS are implemented.
+- Task 39: authoritative per-installation allowance, EAT day boundaries,
+  post-lock timing and last-confirmed header allowance are implemented.
 
 The uploader preserves stable outbox IDs, bounds batch/request sizes, validates
 receipts against the exact submitted snapshot, and acknowledges only committed
@@ -27,19 +29,19 @@ ledger entries. Existing local financial calculations are unchanged.
 | --- | --- | --- |
 | 37 | Incremental download | Source implemented |
 | 38 | Manual Sync Now source integration behind closed release gates | Source implemented |
-| 39 | Daily synchronization limit integration | Next |
-| 40 | Network recovery | Pending |
+| 39 | Daily synchronization limit integration | Source implemented |
+| 40 | Network recovery | Next |
 | 41 | Multi-device testing | Pending |
 | 42 | Security and reliability audit | Pending |
 | 43 | Production readiness | Pending |
 
 ## Validation
 
-The local API/client/database suite has 91 passing tests. Embedded PostgreSQL,
+The local API/client/database suite has 98 passing tests. Embedded PostgreSQL,
 generated test keys and mocked HTTP are used; no live database is contacted.
 Windows CI runs these tests, Rust tests and both MSI/NSIS builds for each source
-change. The Actions result for the exact commit is authoritative; Task 38 must pass
-Windows CI before starting Task 39.
+change. The Actions result for the exact commit is authoritative; Task 39 must pass
+Windows CI before starting Task 40.
 
 ## Operating state
 

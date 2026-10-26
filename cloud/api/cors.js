@@ -1,4 +1,4 @@
-const routes={"/sync/upload":"POST","/sync/pull":"GET","/sync/complete":"POST","/sync/fail":"POST"};
+const routes={"/sync/upload":"POST","/sync/pull":"GET","/sync/complete":"POST","/sync/fail":"POST","/sync/allowance":"GET"};
 export async function withSyncCors(request,env={},handle) {
   const origin=request.headers.get("origin");
   if(!origin) return handle();

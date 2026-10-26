@@ -25,6 +25,7 @@ pub fn cloud_sync_configuration() -> Option<serde_json::Value> {
     Some(serde_json::json!({
         "uploadEndpoint":format!("{origin}/sync/upload"),
         "pullEndpoint":format!("{origin}/sync/pull"),
+        "allowanceEndpoint":format!("{origin}/sync/allowance"),
         "completeEndpoint":format!("{origin}/sync/complete"),
         "failEndpoint":format!("{origin}/sync/fail"), "token":token
     }))

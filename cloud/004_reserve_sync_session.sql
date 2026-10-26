@@ -9,6 +9,7 @@ CREATE OR REPLACE FUNCTION reserve_sync_session(
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    v_now timestamptz;
     v_day_start timestamptz;
     v_next_day timestamptz;
     v_used integer;
@@ -25,13 +26,15 @@ BEGIN
         RAISE EXCEPTION 'device is not registered or is deactivated';
     END IF;
 
+    v_now := clock_timestamp();
+
     -- Abandoned sessions expire after 15 minutes; a later completion
     -- implementation must only complete sessions still marked running.
     UPDATE sync_sessions
        SET status = 'failed'
      WHERE installation_id = p_installation_id
        AND status = 'running'
-       AND started_at < now() - interval '15 minutes';
+       AND started_at <= v_now - interval '15 minutes';
 
     -- Do not permit two active syncs on one installation.
     IF EXISTS (
@@ -41,9 +44,9 @@ BEGIN
         RAISE EXCEPTION 'synchronization already in progress';
     END IF;
 
-    v_day_start := date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa')
+    v_day_start := date_trunc('day', v_now AT TIME ZONE 'Africa/Addis_Ababa')
                    AT TIME ZONE 'Africa/Addis_Ababa';
-    v_next_day := (date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa')
+    v_next_day := (date_trunc('day', v_now AT TIME ZONE 'Africa/Addis_Ababa')
                    + interval '1 day') AT TIME ZONE 'Africa/Addis_Ababa';
 
     SELECT count(*)::integer INTO v_used
@@ -58,8 +61,8 @@ BEGIN
         RAISE EXCEPTION 'daily sync limit reached (10 per installation)';
     END IF;
 
-    INSERT INTO sync_sessions(id, installation_id, status)
-    VALUES (p_session_id, p_installation_id, 'running');
+    INSERT INTO sync_sessions(id, installation_id, status, started_at)
+    VALUES (p_session_id, p_installation_id, 'running', v_now);
     RETURN p_session_id;
 END;
 $$;

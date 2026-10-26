@@ -9,6 +9,7 @@ CREATE OR REPLACE FUNCTION complete_sync_session(
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    v_now timestamptz;
     v_session sync_sessions%ROWTYPE;
     v_day_start timestamptz;
     v_next_day timestamptz;
@@ -35,6 +36,8 @@ BEGIN
         RAISE EXCEPTION 'sync session not found for this installation';
     END IF;
 
+    v_now := clock_timestamp();
+
     -- A repeated completion is safe: it never consumes another slot.
     IF v_session.status = 'completed' THEN
         RETURN true;
@@ -43,15 +46,15 @@ BEGIN
         RETURN false;
     END IF;
 
-    IF v_session.started_at <= now() - interval '15 minutes' THEN
+    IF v_session.started_at > v_now OR v_session.started_at <= v_now - interval '15 minutes' THEN
         UPDATE sync_sessions SET status = 'failed'
          WHERE id = p_session_id;
         RETURN false;
     END IF;
 
-    v_day_start := date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa')
+    v_day_start := date_trunc('day', v_now AT TIME ZONE 'Africa/Addis_Ababa')
                    AT TIME ZONE 'Africa/Addis_Ababa';
-    v_next_day := (date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa')
+    v_next_day := (date_trunc('day', v_now AT TIME ZONE 'Africa/Addis_Ababa')
                    + interval '1 day') AT TIME ZONE 'Africa/Addis_Ababa';
 
     SELECT count(*)::integer INTO v_completed
@@ -69,7 +72,7 @@ BEGIN
     END IF;
 
     UPDATE sync_sessions
-       SET status = 'completed', completed_at = now()
+       SET status = 'completed', completed_at = v_now
      WHERE id = p_session_id;
     RETURN true;
 END;
