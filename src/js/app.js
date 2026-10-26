@@ -1,4 +1,5 @@
 import * as api from "./api.js";
+import { endNativeSession } from "./auth/session.js";
 import { createSyncNowController } from "./sync/sync_now.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
@@ -32,7 +33,11 @@ function buildLayouts() {
   window.addEventListener("offline",()=>manualSync.invalidate());
   window.addEventListener("online",()=>{void manualSync.refresh();});
   void manualSync.refresh();
-  shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
+  shell.querySelector("#logout-btn").addEventListener("click",async()=>{
+    manualSync.invalidate();
+    try {await endNativeSession({logout:api.auth.logout,clearUser:()=>setUser(null),navigate});}
+    catch {pushToast("Could not finish logging out. Please try again.","error");}
+  });
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
 }
 
@@ -59,6 +64,8 @@ function promotePageActions(appOutlet, shell) {
 }
 
 async function bootstrap(){
+  // A reloaded WebView must not inherit a previous window's native login.
+  try {await api.auth.logout();} catch {appRoot.textContent="Could not initialize the local session. Please restart the app.";return;}
   const {publicScreen,publicOutlet,shell,appOutlet}=buildLayouts();
   registerRoutes({
     "/setup":{loader:()=>import("./auth/initialization.js"),public:true,title:"Setup"},

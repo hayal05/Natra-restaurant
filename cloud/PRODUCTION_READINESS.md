@@ -36,7 +36,7 @@ PGlite and generated test keys. None contact live Neon. See
 
 | Gate | Required evidence before live release | Current state |
 | --- | --- | --- |
-| Native authorization | Backend user/role-bound lease; logout/revocation tests | Not implemented for live activation |
+| Native authorization | Backend user/role-bound lease; logout/revocation tests | Administrator-owned native session and callback checks added in source; live WebView acceptance pending |
 | Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Staging CLI/environment adapter only |
 | WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Review/remediation pending |
 | Financial conflicts | Reviewed handling of two offline settlements/reversals and dependency conflicts; no silent financial skips | Resolution workflow pending |
@@ -114,3 +114,7 @@ Migration 015 hardens named function privileges/search paths without changing
 business bodies. See [Database privileges](DATABASE_PRIVILEGES.md) for test
 evidence and required environment review. This closes the source-level default
 execution/search-path gap; the live-role acceptance gate remains open.
+
+The native-authorization step adds administrator-owned login generations and
+per-callback account checks. See [Native authorization](NATIVE_SYNC_AUTHORIZATION.md).
+This does not supply secure cloud-token provisioning or remote bearer revocation.

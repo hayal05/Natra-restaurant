@@ -34,6 +34,18 @@ functions. Restricted-role and temporary-shadow regressions pass locally.
 and the remaining environment review. No live grants or gates changed.
 The follow-up commit requires Windows CI before being treated as a build.
 
+## Current step — native sync authorization
+
+Native credential-verified administrator sessions now own staged cloud leases.
+Configuration and every local exchange callback check the current account.
+Logout, reauthentication, account changes, expiry and panic recovery revoke old
+leases. Frontend logout waits for native revocation; reload starts anonymous.
+See [Native authorization](cloud/NATIVE_SYNC_AUTHORIZATION.md).
+
+The local Node suite passes 109 tests. This step requires Windows CI for Rust
+and MSI/NSIS verification. Secure fresh-token provisioning and renewal are the
+next separate implementation step; live synchronization remains disabled.
+
 ## Verification
 
 Task 42 commit `1219c6e` passed Windows CI run `40364954977`: 101 Node tests,
@@ -56,7 +68,8 @@ introduced.
 
 - `LIVE_NEON_SYNC_ENABLED` remains false; new native writes reject and
   configuration returns None. All four Worker enablement flags remain absent.
-- Secure fresh-token delivery/renewal and native user/role binding are pending.
+- Native administrator/lease binding is implemented in source; secure fresh-token
+  delivery/renewal, approved server-subject binding and remote revocation remain pending.
 - WebView/CSP/IPC review, financial-conflict resolution, rejected-event repair,
   least-privilege grants and operational/concurrency evidence are pending.
 - No cloud migrations, live credentials, signing keys or services were applied.

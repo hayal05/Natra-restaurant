@@ -7,6 +7,7 @@ export const auth = {
   isInitialized: () => invoke("is_initialized"),
   initializeAdmin: (username, password, fullName) => invoke("initialize_admin", { username, password, fullName }),
   login: (username, password) => invoke("login", { username, password }),
+  logout: () => invoke("logout"),
 };
 
 export const waiters = {

@@ -47,6 +47,7 @@ pub fn run() {
             commands::auth::is_initialized,
             commands::auth::initialize_admin,
             commands::auth::login,
+            commands::auth::logout,
             commands::waiters::create_waiter,
             commands::waiters::list_waiters,
             commands::waiters::set_waiter_active,
