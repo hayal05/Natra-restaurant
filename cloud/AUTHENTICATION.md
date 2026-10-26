@@ -2,7 +2,7 @@
 
 Source implementation is ready for review. No live credentials, migrations,
 identity-provider configuration or deployments have been applied. Upload and
-pull still return HTTP 501 after successful authentication/session validation.
+pull return HTTP 501 by default after successful authentication/session validation.
 
 ## Verification in the sync Worker
 
@@ -92,7 +92,7 @@ actions without contacting live Neon or an identity provider. They do not
 establish production concurrency behavior.
 
 Before production: configure the trusted issuer, public JWKS, restricted
-signing host and database roles; run authorized environment checks. Financial
-upload/download, client token delivery, Sync Now integration and operational
-concurrency testing remain later integration work. Live synchronization and
+signing host and database roles; run authorized environment checks. Client token delivery, Sync Now integration and operational concurrency testing
+remain later integration work; staged upload/download modules have separate unset
+enablement flags. Live synchronization and
 production deployment require separate authorization.

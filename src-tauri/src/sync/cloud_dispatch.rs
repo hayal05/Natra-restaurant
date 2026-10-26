@@ -17,13 +17,36 @@ pub(crate) struct DownloadedEvent {
 }
 
 /// Transport-independent payload from the cloud event ledger.
-/// The actual HTTP API is intentionally a later, separately authorized task.
+/// Wire sequences support exact decimal strings from the staged HTTP API.
 #[derive(Debug, Deserialize)]
 pub(crate) struct SequencedDownload {
     pub event_id: String,
+    #[serde(deserialize_with = "deserialize_cloud_sequence")]
     pub sequence_id: i64,
     #[serde(flatten)]
     pub event: DownloadedEvent,
+}
+
+// Decimal-string wire cursors preserve PostgreSQL bigint precision through
+// the WebView. Legacy integer JSON is accepted only when it is a positive i64.
+fn deserialize_cloud_sequence<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where D: serde::Deserializer<'de> {
+    use serde::de::Error as _;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let number = match value {
+        serde_json::Value::String(text) => {
+            if text.is_empty() || text.len() > 19 || text.starts_with('0')
+                || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(D::Error::custom("invalid cloud sequence"));
+            }
+            text.parse::<i64>().map_err(|_| D::Error::custom("invalid cloud sequence"))?
+        }
+        serde_json::Value::Number(number) => number.as_i64()
+            .ok_or_else(|| D::Error::custom("invalid cloud sequence"))?,
+        _ => return Err(D::Error::custom("invalid cloud sequence")),
+    };
+    if number <= 0 { return Err(D::Error::custom("invalid cloud sequence")); }
+    Ok(number)
 }
 
 /// Apply a downloaded page atomically. A failure retains both the old
@@ -189,6 +212,29 @@ mod tests {
     use super::*;
     use crate::database::{connection, migrations};
     use rusqlite::Connection;
+
+    #[test]
+    fn string_wire_sequence_commits_without_webview_precision_loss() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        migrations::run(&conn).unwrap();
+        let wire = serde_json::json!({
+            "event_id":"11111111-1111-4111-8111-111111111111",
+            "sequence_id":"9007199254740993",
+            "entity_type":"categories", "entity_id":"remote:large-cursor",
+            "operation":"upsert", "payload":{"name":"Large cursor category","description":null}
+        });
+        let page: SequencedDownload = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(page.sequence_id, 9_007_199_254_740_993);
+        apply_download_page(&mut conn, &[page]).unwrap();
+        assert_eq!(connection::read_cloud_pull_cursor(&conn).unwrap(), 9_007_199_254_740_993);
+        for invalid in [serde_json::json!("9223372036854775808"), serde_json::json!("01"),
+            serde_json::json!("0"), serde_json::json!("-1"), serde_json::json!(1.5), serde_json::json!(true)] {
+            let mut bad = wire.clone();
+            bad["sequence_id"] = invalid;
+            assert!(serde_json::from_value::<SequencedDownload>(bad).is_err());
+        }
+    }
 
     #[test]
     fn reject_duplicate_cloud_sale_line_identity_without_advancing_cursor() {

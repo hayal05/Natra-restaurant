@@ -1,3 +1,5 @@
+import { createEventPuller } from "../db/pull.js";
+import { handlePullRequest } from "./pull.js";
 import { createBatchUploader } from "../db/upload.js";
 import { handleUploadRequest } from "./upload.js";
 import { configuredAuthVerifier } from "../auth/jwt.js";
@@ -103,6 +105,15 @@ export async function handleSyncRequest(request, env = {}) {
     if (typeof upload !== "function") return json(503,"upload_not_configured");
     return handleUploadRequest(request,scope,upload);
   }
-  // Pull remains staged for Task 37. No live flag is configured here.
+  if (path === "/sync/pull" && env.SYNC_PULL_ENABLED === "true") {
+    let pull = env.SYNC_EVENT_PULLER;
+    if (pull === undefined) {
+      try { pull = createEventPuller(env.NEON_DATABASE_URL); }
+      catch { return json(503,"pull_not_configured"); }
+    }
+    if (typeof pull !== "function") return json(503,"pull_not_configured");
+    return handlePullRequest(request,scope,pull);
+  }
+  // No live upload or pull flags are configured by this source change.
   return json(501, "sync_endpoint_not_implemented");
 }

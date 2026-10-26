@@ -4,7 +4,7 @@
 
 The POST `/sync/upload` implementation is staged behind the exact server flag
 `SYNC_UPLOAD_ENABLED="true"`. This flag is absent from wrangler.toml and has
-not been configured in any live environment. Pull remains unimplemented.
+not been configured in any live environment. Pull is staged separately in Task 37 behind its own unset flag.
 
 The authenticated identity supplies workspace, installation and session IDs.
 The body is strictly `{ "events": [...] }` with 1–500 events and a 1 MiB request
