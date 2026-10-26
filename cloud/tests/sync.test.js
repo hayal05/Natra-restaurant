@@ -46,7 +46,7 @@ test("workspace and installation must both be authorized", async () => {
 test("even authenticated clients cannot upload before activation", async () => {
   const response = await worker.fetch(req("Bearer token"),{
     SYNC_AUTH_VERIFIER: async () => ({
-      authorized: true,workspace_id:"11111111-1111-4111-8111-111111111111",installation_id:"22222222-2222-4222-8222-222222222222",session_authorized:true,session_id:"33333333-3333-4333-8333-333333333333",
+      authorized: true,workspace_id:"11111111-1111-4111-8111-111111111111",installation_id:"22222222-2222-4222-8222-222222222222",session_authorized:true,session_id:"33333333-3333-4333-8333-333333333333",session_workspace_id:"11111111-1111-4111-8111-111111111111",session_installation_id:"22222222-2222-4222-8222-222222222222",
     }),
   });
   assert.equal(response.status,501);
@@ -104,5 +104,24 @@ test("verified workspace identity alone cannot access sync without an authorized
     });
     assert.equal(response.status,403);
     assert.deepEqual(await response.json(),{error:"sync_session_required"});
+  }
+});
+
+test("sync session must match authorized workspace and installation", async () => {
+  const base = {
+    authorized:true,workspace_id:"11111111-1111-4111-8111-111111111111",installation_id:"22222222-2222-4222-8222-222222222222",
+    session_authorized:true,session_id:"33333333-3333-4333-8333-333333333333",
+    session_workspace_id:"11111111-1111-4111-8111-111111111111",session_installation_id:"22222222-2222-4222-8222-222222222222",
+  };
+  for (const identity of [
+    {...base,session_workspace_id:"44444444-4444-4444-8444-444444444444"},
+    {...base,session_installation_id:"44444444-4444-4444-8444-444444444444"},
+    {...base,session_workspace_id:undefined},
+  ]) {
+    const response = await worker.fetch(req("Bearer token"), {
+      SYNC_AUTH_VERIFIER: async () => identity,
+    });
+    assert.equal(response.status,403);
+    assert.deepEqual(await response.json(), {error:"sync_session_required"});
   }
 });
