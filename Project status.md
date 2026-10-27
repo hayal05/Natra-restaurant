@@ -60,8 +60,10 @@ bounded native WinHTTP broker transport are implemented behind the closed gate.
 Delivery is bound to the native login generation and exact lease; logout or
 account/context changes prevent returned tokens from reaching the coordinator.
 Refresh remains local-only. No plaintext/environment token fallback remains.
-See [Native delivery](cloud/NATIVE_CREDENTIAL_DELIVERY.md). Windows CI must
-verify this source commit before the next blocker is started.
+See [Native delivery](cloud/NATIVE_CREDENTIAL_DELIVERY.md). Initial native
+commit `6f0bbef` passed Windows CI `40463541727` (124 Node and 175 Rust tests,
+provisioning utility and MSI/NSIS builds). The follow-up one-attempt WinHTTP
+policy and its native regression also require green CI before advancing.
 
 The remaining work includes staging provisioning/role/issuer/TLS acceptance,
 remote revocation policy, WebView/CSP/IPC hardening, financial-conflict recovery,

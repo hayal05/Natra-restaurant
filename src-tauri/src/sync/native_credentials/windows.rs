@@ -53,20 +53,46 @@ unsafe fn header(h: &Handle,code: u32) -> AppResult<String> {
     let end=buf.iter().position(|c|*c==0).unwrap_or(buf.len());
     String::from_utf16(&buf[..end]).map_err(|_|unavailable())
 }
+fn client_session() -> AppResult<Handle> { unsafe {
+    let agent=wide("NatraRestaurant/SyncBroker");
+    let session=handle(WinHttpOpen(agent.as_ptr(),WINHTTP_ACCESS_TYPE_NO_PROXY,null(),null(),0))?;
+    if WinHttpSetTimeouts(session.0,5000,5000,5000,5000)==0 { return Err(unavailable()); }
+    option(&session,WINHTTP_OPTION_CONNECT_RETRIES,1)?;
+    option(&session,WINHTTP_OPTION_SECURE_PROTOCOLS,WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2|WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3)?;
+    Ok(session)
+} }
+fn request_handle(connection: &Handle) -> AppResult<Handle> { unsafe {
+    let method=wide("POST");let path=wide("/session");
+    let req=handle(WinHttpOpenRequest(connection.0,method.as_ptr(),path.as_ptr(),null(),null(),null(),WINHTTP_FLAG_SECURE))?;
+    option(&req,WINHTTP_OPTION_DISABLE_FEATURE,WINHTTP_DISABLE_REDIRECTS|WINHTTP_DISABLE_COOKIES|WINHTTP_DISABLE_AUTHENTICATION)?;
+    option(&req,WINHTTP_OPTION_MAX_RESPONSE_HEADER_SIZE,16384)?;
+    Ok(req)
+} }
+#[cfg(test)]
+#[test]
+fn winhttp_session_applies_single_attempt_and_modern_tls_without_sending() {
+    let session=client_session().unwrap();
+    unsafe {
+        for (code,expected) in [(WINHTTP_OPTION_CONNECT_RETRIES,1),
+            (WINHTTP_OPTION_SECURE_PROTOCOLS,WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2|WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3)] {
+            let mut actual=0u32;let mut size=4u32;
+            assert_ne!(WinHttpQueryOption(session.0,code,(&mut actual as *mut u32).cast(),&mut size),0);
+            assert_eq!(actual,expected);
+        }
+        let host=wide("broker.example.invalid");
+        let connection=handle(WinHttpConnect(session.0,host.as_ptr(),443,0)).unwrap();
+        // WinHttpConnect/OpenRequest allocate handles; no request is sent here.
+        let _request=request_handle(&connection).unwrap();
+    }
+}
 pub(super) fn request(p: &Provision) -> AppResult<Zeroizing<Vec<u8>>> { unsafe {
     let started=Instant::now();
     let check=||if started.elapsed()>Duration::from_secs(20) { Err(unavailable()) } else { Ok(()) };
     let url=https(&p.broker_endpoint)?;
-    let agent=wide("NatraRestaurant/SyncBroker");let host=wide(url.host_str().ok_or_else(unavailable)?);
-    let method=wide("POST");let path=wide("/session");
-    let session=handle(WinHttpOpen(agent.as_ptr(),WINHTTP_ACCESS_TYPE_NO_PROXY,null(),null(),0))?;
-    if WinHttpSetTimeouts(session.0,5000,5000,5000,5000)==0 { return Err(unavailable()); }
-    option(&session,WINHTTP_OPTION_CONNECT_RETRIES,0)?;
-    option(&session,WINHTTP_OPTION_SECURE_PROTOCOLS,WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2|WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3)?;
+    let session=client_session()?;
+    let host=wide(url.host_str().ok_or_else(unavailable)?);
     let connection=handle(WinHttpConnect(session.0,host.as_ptr(),443,0))?;
-    let req=handle(WinHttpOpenRequest(connection.0,method.as_ptr(),path.as_ptr(),null(),null(),null(),WINHTTP_FLAG_SECURE))?;
-    option(&req,WINHTTP_OPTION_DISABLE_FEATURE,WINHTTP_DISABLE_REDIRECTS|WINHTTP_DISABLE_COOKIES|WINHTTP_DISABLE_AUTHENTICATION)?;
-    option(&req,WINHTTP_OPTION_MAX_RESPONSE_HEADER_SIZE,16384)?;
+    let req=request_handle(&connection)?;
     let headers=Zeroizing::new(format!("Authorization: Bearer {}\r\nContent-Type: application/json\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nCache-Control: no-store\r\n",p.credential));
     let headers=Zeroizing::new(wide(&headers));
     let body=serde_json::to_vec(&serde_json::json!({"installation_id":p.installation_id,"local_user_id":p.local_user_id})).map_err(|_|unavailable())?;

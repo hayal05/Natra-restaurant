@@ -95,7 +95,7 @@ fresh broker session. No native or frontend token cache is persisted.
 ## HTTPS boundary
 
 Native broker calls use WinHTTP with no proxy discovery/configuration, cookies,
-automatic authentication or redirects, and with TLS 1.2/1.3 and Windows
+automatic authentication or redirects, one connection attempt, and TLS 1.2/1.3 with Windows
 certificate/hostname validation. No certificate-error bypass or custom trust
 root is installed. There is no automatic application reservation retry. A POST
 contains only native installation/user IDs; the provisioned bearer credential
@@ -126,7 +126,9 @@ WebView tokens are outside that memory-erasure claim. Secrets are never logged.
 Node tests cover metadata-only refresh, delivery after begin, rejected/changed
 origins and logout before business transfer. Rust tests cover packet/response
 binding/deadlines, native login/lease race rejection, and an isolated synthetic
-Windows credential-store read/write/remove roundtrip. Test entries use a separate
+Windows credential-store read/write/remove roundtrip. A native policy test
+constructs the HTTP handles without sending, checking the connection-attempt
+count, TLS mask and request-option setup. Test entries use a separate
 `.../Sync/Test/` namespace and are removed, including on test failure. No actual
 server credential is provisioned in CI. The provisioning utility is compiled
 with the Windows build and included separately from the MSI/NSIS executables.
