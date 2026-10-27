@@ -141,11 +141,11 @@ test("browser enforces the WebView policy while rendering app data and print fra
       });
       await page.locator("#username").fill("cashier");await page.locator("#password").fill("test-secret");
       await page.getByRole("button",{name:"Log in",exact:true}).click();
-      await page.waitForURL("**/#/pos");await page.locator("#checkout-btn").waitFor();
+      await page.waitForURL(url=>url.hash==="#/pos");await page.locator("#checkout-btn").waitFor();
       assert.equal(await page.locator("#sidebar-nav .nav-item").count(),1);
       assert.equal(await page.getByRole("button",{name:"Reverse",exact:true}).count(),0);
       await page.evaluate(()=>{location.hash="/settings";});
-      await page.waitForURL("**/#/pos");assert.equal(await page.locator("#backup-section").count(),0);
+      await page.waitForURL(url=>url.hash==="#/pos");assert.equal(await page.locator("#backup-section").count(),0);
     });
     await t.test("native expiry clears the active screen and returns to login",async()=>{
       await page.evaluate(async()=>{
