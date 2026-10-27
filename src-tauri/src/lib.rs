@@ -13,6 +13,7 @@ pub mod errors;
 pub mod models;
 pub mod services;
 pub mod sync;
+mod webview_security;
 
 use database::Db;
 use tauri::Manager;
@@ -35,6 +36,13 @@ pub fn run() {
 
             app.manage(db);
             app.manage(sync::cloud_bridge::CloudBridge::default());
+
+            let main_config=app.config().app.windows.iter().find(|w|w.label=="main")
+                .ok_or_else(||std::io::Error::other("main window configuration missing"))?;
+            tauri::WebviewWindowBuilder::from_config(&*app,main_config)?
+                .on_navigation(webview_security::allow_main_navigation)
+                .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny)
+                .build()?;
 
             // Cloud sync is manual-only. Do not start a background sync loop.
             // Scheduled local backups remain independent of synchronization.

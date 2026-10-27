@@ -1,3 +1,4 @@
+import { setPortrait } from "../utils/html.js";
 /** Dashboard: the "walk in and see how the day looks" page. */
 import * as api from "../api.js";
 import { refresh } from "../router.js";
@@ -33,4 +34,4 @@ export async function render(container) {
   renderTable(container.querySelector("#top-products-table"),{columns:[{key:"item_name",label:"Item"},{key:"quantity_sold",label:"Qty",numeric:true},{key:"total_sales",label:"Sales",numeric:true,format:(r)=>formatMoney(r.total_sales,currency)},{key:"total_cost",label:"Cost",numeric:true,format:(r)=>formatMoney(r.total_cost,currency)}],rows:summary.top_products_today,emptyMessage:"No sales recorded today yet.",getRowKey:(r)=>r.item_id});
 }
 
-function waiterIdentity(waiter){const wrap=document.createElement("div");wrap.className="waiter-identity";const avatar=document.createElement("div");avatar.className="waiter-avatar";if(waiter.profile_photo){const img=document.createElement("img");img.src=waiter.profile_photo;img.alt="";avatar.appendChild(img);}else{avatar.textContent=(waiter.full_name||"?").trim().charAt(0).toUpperCase();}const name=document.createElement("span");name.textContent=waiter.full_name;wrap.append(avatar,name);return wrap;}
+function waiterIdentity(waiter){const wrap=document.createElement("div");wrap.className="waiter-identity";const avatar=document.createElement("div");avatar.className="waiter-avatar";setPortrait(avatar,waiter.profile_photo,waiter.full_name);const name=document.createElement("span");name.textContent=waiter.full_name;wrap.append(avatar,name);return wrap;}

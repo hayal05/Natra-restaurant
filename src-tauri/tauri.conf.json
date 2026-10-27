@@ -16,16 +16,43 @@
         "minWidth": 1024,
         "minHeight": 700,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "label": "main",
+        "create": false,
+        "devtools": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "script-src-attr": "'none'",
+        "style-src": "'self' 'unsafe-inline'",
+        "style-src-attr": "'unsafe-inline'",
+        "style-src-elem": "'self' 'unsafe-inline'",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self'",
+        "frame-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "worker-src": "'none'",
+        "media-src": "'none'"
+      },
+      "capabilities": [
+        "main-local"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "icon": ["icons/icon.ico"]
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }

@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Point of sale. Items are staged in a client-side Current sale cart only.
  * Nothing is recorded as a sale until Complete sale is pressed.
@@ -447,10 +448,4 @@ export async function render(container) {
       button.disabled = cart.size === 0;
     }
   });
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
 }

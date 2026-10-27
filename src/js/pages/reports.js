@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Reports: a daily report (revenue/cost/profit + products sold, split
  * ready-made vs cookable, with print support) on top, then the existing
@@ -243,11 +244,7 @@ function printDailyReport(els, state) {
   window.print();
 }
 
-function escapeHtml(value) {
-  const div = document.createElement("div");
-  div.textContent = value ?? "";
-  return div.innerHTML;
-}
+
 
 async function loadReport(els, { year, month }) {
   const currency = store.getState().settings?.currency ?? "USD";

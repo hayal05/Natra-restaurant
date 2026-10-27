@@ -1,7 +1,7 @@
 {
   "name": "natra-restaurant-management",
   "version": "0.1.0",
-  "description": "NATRA — A local-first restaurant management system (waiters, POS, items, raw materials, expenses, financial reports).",
+  "description": "NATRA \u2014 A local-first restaurant management system (waiters, POS, items, raw materials, expenses, financial reports).",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
@@ -11,7 +11,8 @@
   "license": "MIT",
   "devDependencies": {
     "@electric-sql/pglite": "0.5.11",
-    "@tauri-apps/cli": "2.11.5"
+    "@tauri-apps/cli": "2.11.5",
+    "playwright-core": "1.62.1"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.2.0",

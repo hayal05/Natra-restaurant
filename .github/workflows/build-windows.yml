@@ -52,7 +52,10 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Test serverless API security and health
-        run: node --test cloud/tests/health.test.js cloud/tests/sync.test.js cloud/tests/enrollment.test.js cloud/tests/issuance.test.js cloud/tests/upload.test.js cloud/tests/pull.test.js cloud/tests/sync_now.test.js cloud/tests/allowance.test.js cloud/tests/recovery.test.js cloud/tests/privileges.test.js cloud/tests/native_session.test.js cloud/tests/broker.test.js
+        run: node --test cloud/tests/health.test.js cloud/tests/sync.test.js cloud/tests/enrollment.test.js cloud/tests/issuance.test.js cloud/tests/upload.test.js cloud/tests/pull.test.js cloud/tests/sync_now.test.js cloud/tests/allowance.test.js cloud/tests/recovery.test.js cloud/tests/privileges.test.js cloud/tests/native_session.test.js cloud/tests/broker.test.js cloud/tests/webview_security.test.js
+
+      - name: Test WebView policy and injection in Edge
+        run: node --test cloud/tests/webview.browser.test.js
 
       - name: Run Rust tests
         working-directory: src-tauri

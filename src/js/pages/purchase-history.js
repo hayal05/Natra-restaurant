@@ -1,3 +1,4 @@
+import { printHtml, tablePrintHtml } from "../utils/print.js";
 import * as api from "../api.js";
 import { store, withErrorToast } from "../state.js";
 import { navigate } from "../router.js";
@@ -103,16 +104,9 @@ export async function render(container) {
     const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`raw-material-purchases-${el("purchase-month").value||"all"}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
   el("purchase-print").onclick=()=>{
-    const win=window.open("","_blank");
-    if(!win){window.print();return;}
-    const h=win.document.createElement("h2");h.textContent="Raw Material Purchase History";
-    const p=win.document.createElement("p");p.textContent=el("purchase-summary").textContent;
-    const table=win.document.createElement("table");table.style.cssText="border-collapse:collapse;width:100%;font-family:Arial;font-size:12px";
     const headings=["Date (EAT)","Material","Quantity","Unit cost","Total","Supplier","Notes"];
-    for(const row of [headings,...visible.map(r=>[r.localDate,r.material,r.quantity+" "+r.unit,formatMoney(r.unit_cost,currency),formatMoney(r.total_cost,currency),r.supplier||"",r.note||""])]){
-      const tr=table.insertRow();for(const value of row){const td=document.createElement(row===headings?"th":"td");td.textContent=value;td.style.cssText="border:1px solid #ccc;padding:6px;text-align:left";tr.append(td);}
-    }
-    win.document.body.append(h,p,table);win.print();
+    const rows=visible.map(r=>[r.localDate,r.material,r.quantity+" "+r.unit,formatMoney(r.unit_cost,currency),formatMoney(r.total_cost,currency),r.supplier||"",r.note||""]);
+    printHtml(tablePrintHtml("Raw Material Purchase History",el("purchase-summary").textContent,headings,rows),"Purchase history print");
   };
   refresh();
 }

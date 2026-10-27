@@ -125,7 +125,9 @@ fn validate_response(p: &Provision, bytes: &[u8], now: i64) -> AppResult<Deliver
 pub(crate) fn available(identity: &Identity) -> AppResult<serde_json::Value> {
     let bytes=platform_read(&key(identity)?)?;
     let p=parse(&bytes,Some(identity))?;
-    Ok(endpoints(&p.sync_origin)) // Never return the opaque secret or a token on refresh.
+    let config=endpoints(&p.sync_origin);
+    if !crate::webview_security::allows_data_endpoint(config["uploadEndpoint"].as_str().unwrap_or("")) { return Err(unavailable()); }
+    Ok(config) // Never return the opaque secret or a token on refresh.
 }
 static DELIVERY_BUSY: std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 struct DeliveryGuard;
@@ -137,6 +139,9 @@ pub(crate) fn fetch(identity: &Identity) -> AppResult<Delivered> {
     let _guard=DeliveryGuard;
     let bytes=platform_read(&key(identity)?)?;
     let p=parse(&bytes,Some(identity))?;
+    if !crate::webview_security::allows_data_endpoint(&format!("{}/sync/upload",p.sync_origin.trim_end_matches('/'))) {
+        return Err(unavailable());
+    }
     let raw=platform_request(&p)?;
     validate_response(&p,&raw,chrono::Utc::now().timestamp())
 }

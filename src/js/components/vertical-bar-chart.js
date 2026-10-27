@@ -1,3 +1,5 @@
+import { escapeHtml } from "../utils/html.js";
+const safeTone=value=>["sage","rust","navy","amber","navy-bright"].includes(value)?value:"navy";
 /**
  * Grouped vertical bar chart — a cluster of bars per group (e.g. one
  * month), each cluster holding one bar per series (e.g. revenue, cost).
@@ -32,7 +34,7 @@ export function renderVerticalBarChart(container, { groups, series, formatValue 
     .map(
       (s) => `
         <span class="vbar-chart-legend-item">
-          <span class="vbar-chart-legend-swatch" style="background: var(--color-${s.tone})"></span> ${s.label}
+          <span class="vbar-chart-legend-swatch" style="background: var(--color-${safeTone(s.tone)})"></span> ${escapeHtml(s.label)}
         </span>
       `
     )
@@ -57,7 +59,7 @@ export function renderVerticalBarChart(container, { groups, series, formatValue 
       track.className = "vbar-chart-track";
       track.title = `${series[i]?.label ?? ""}: ${formatValue(value)}`;
       const bar = document.createElement("div");
-      bar.className = "vbar-chart-bar" + (series[i]?.tone ? ` tone-${series[i].tone}` : "");
+      bar.className = "vbar-chart-bar" + (series[i]?.tone ? ` tone-${safeTone(series[i].tone)}` : "");
       bar.style.height = `${pct}%`;
       track.appendChild(bar);
       bars.appendChild(track);

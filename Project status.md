@@ -103,3 +103,14 @@ The next work is resolving the listed production blockers and collecting
 staging acceptance evidence. Continue code work with separate commits and
 Windows CI. Merge, deployment, live SQL/configuration and activation require
 explicit authorization; they were not performed by Tasks 41–43.
+
+## WebView hardening follow-up — stage 3A
+
+Source now includes bundled-script CSP, denied main-window navigation/popups,
+explicit local-main ACL coverage for all 60 commands, escaped stored text and
+bounded raster portraits, and sandboxed receipt/table printing. Native delivery
+also requires an exact data-origin CSP pin; none is currently configured.
+See [WebView hardening](cloud/WEBVIEW_HARDENING.md). Windows CI must pass for
+this commit before proceeding. Legacy business-command native session/role
+authorization is the next stage (3B), followed by staging/runtime/printer and
+other production acceptance. Live sync remains disabled.

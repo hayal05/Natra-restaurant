@@ -2,8 +2,8 @@
  * Single-sale waiter receipt, rendered from committed checkout snapshots.
  * Print uses an isolated iframe so POS styling doesn't appear on paper.
  */
-const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+import { escapeHtml } from "./html.js";
+import { printHtml } from "./print.js";
 const amount = (v) => Number(v ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantName, currency }) {
@@ -18,13 +18,13 @@ export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantN
     timeZone: "Africa/Addis_Ababa", hour: "2-digit", minute: "2-digit", hour12: true,
   }).format(date);
   const rows = items.map((item) => `<tr>
-    <td>${escapeHtml(item.item_name)}</td><td class="num">${item.quantity}</td>
+    <td>${escapeHtml(item.item_name)}</td><td class="num">${escapeHtml(item.quantity)}</td>
     <td class="num">${amount(item.unit_price)}</td><td class="num">${amount(item.line_total)}</td>
   </tr>`).join("");
   const unit = escapeHtml(currency || "ETB");
   const title = escapeHtml(restaurantName || "Restaurant");
   const total = amount(sale.total_amount);
-  return `<!doctype html><html><head><meta charset="utf-8"/><title>Waiter Receipt #${sale.id}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>Waiter Receipt #${escapeHtml(sale.id)}</title>
   <style>
     @page { size: 80mm auto; margin: 4mm; }
     * { box-sizing:border-box; }
@@ -53,11 +53,11 @@ export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantN
     <div class="restaurant">${title}</div>
     <div class="title">Waiter Outstanding Receipt</div>
     <div class="rule"></div>
-    <div class="meta"><span>Transaction Ref</span><span>S-${sale.id}</span></div>
+    <div class="meta"><span>Transaction Ref</span><span>S-${escapeHtml(sale.id)}</span></div>
     <div class="meta"><span>Date</span><span>${dateLabel}</span></div>
     <div class="meta"><span>Time</span><span>${timeLabel}</span></div>
     <div class="meta"><span>Waiter</span><span>${escapeHtml(waiterName)}</span></div>
-    <div class="meta"><span>Waiter ID</span><span>${sale.waiter_id}</span></div>
+    <div class="meta"><span>Waiter ID</span><span>${escapeHtml(sale.waiter_id)}</span></div>
     <div class="meta"><span>Cashier</span><span>${escapeHtml(cashierName || "—")}</span></div>
     <div class="rule"></div>
     <strong>TRANSACTION ITEMS</strong>
@@ -73,15 +73,5 @@ export function waiterReceiptHtml({ result, waiterName, cashierName, restaurantN
 }
 
 export function printWaiterReceipt(html) {
-  const frame = document.createElement("iframe");
-  frame.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0";
-  frame.setAttribute("title", "Waiter receipt print");
-  document.body.appendChild(frame);
-  frame.onload = () => {
-    try { frame.contentWindow.focus(); frame.contentWindow.print(); }
-    catch (err) { frame.remove(); throw err; }
-  };
-  frame.srcdoc = html;
-  // Keep frame during the print dialog; clean it up after the dialog closes.
-  frame.contentWindow?.addEventListener("afterprint", () => frame.remove(), { once:true });
+  return printHtml(html,"Waiter receipt print");
 }
