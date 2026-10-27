@@ -42,7 +42,8 @@ stale-callback rejection, fresh lease acquisition and shared-guard release.
    text, bounded raster portraits, sandboxed printing, denied navigation/popups
    and an explicit local-main command capability. Edge fixtures and Rust policy
    tests cover these source changes. See [WebView hardening](WEBVIEW_HARDENING.md).
-   Legacy business-command native session/role authorization remains stage 3B.
+   Legacy business-command native session/role guards are implemented in
+   [stage 3B](BUSINESS_AUTHORIZATION.md); exact-commit Windows CI is required.
    Actual packaged WebView navigation/IPC, physical printing and approved exact
    data-origin staging acceptance are still required; no remote origin is pinned.
 3. **Offline business conflicts:** distinct events settling or reversing the

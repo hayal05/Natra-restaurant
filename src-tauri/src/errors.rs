@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("authentication error: {0}")]
     Auth(String),
 
+    #[error("permission denied: {0}")]
+    Forbidden(String),
+
     #[error("system not initialized")]
     NotInitialized,
 

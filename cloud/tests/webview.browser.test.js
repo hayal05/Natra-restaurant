@@ -124,6 +124,38 @@ test("browser enforces the WebView policy while rendering app data and print fra
       await page.goto(origin+"/index.html");await page.getByRole("heading",{name:"Welcome back"}).waitFor();
       assert.equal(await page.locator("#header-sync-btn").isDisabled(),true);
     });
+    await t.test("staff login lands on POS, hides admin actions and rejects direct admin routes",async()=>{
+      await page.evaluate(()=>{
+        window.__TAURI__.core.invoke=async cmd=>{
+          if(cmd==="logout")return;
+          if(cmd==="cloud_sync_configuration")return null;
+          if(cmd==="login")return {id:2,full_name:"Test Cashier",username:"cashier",role:"staff",is_active:true};
+          if(cmd==="get_settings"){
+            if(window.expireSession)throw "authentication error: your local session has ended; please sign in again";
+            return {restaurant_name:"Test Restaurant",currency:"ETB",sync_enabled:false};
+          }
+          if(cmd==="list_items" || cmd==="list_waiters")return [];
+          if(cmd==="list_sales")return [{id:1,waiter_id:1,total_quantity:2,payment_method:"cash",total_amount:30,is_settled:false,is_reversed:false,created_at:new Date().toISOString()}];
+          throw new Error("Unexpected staff command "+cmd);
+        };
+      });
+      await page.locator("#username").fill("cashier");await page.locator("#password").fill("test-secret");
+      await page.getByRole("button",{name:"Log in",exact:true}).click();
+      await page.waitForURL("**/#/pos");await page.locator("#checkout-btn").waitFor();
+      assert.equal(await page.locator("#sidebar-nav .nav-item").count(),1);
+      assert.equal(await page.getByRole("button",{name:"Reverse",exact:true}).count(),0);
+      await page.evaluate(()=>{location.hash="/settings";});
+      await page.waitForURL("**/#/pos");assert.equal(await page.locator("#backup-section").count(),0);
+    });
+    await t.test("native expiry clears the active screen and returns to login",async()=>{
+      await page.evaluate(async()=>{
+        window.expireSession=true;
+        await (await import("/js/api.js")).settings.get().catch(()=>{});
+      });
+      await page.getByRole("heading",{name:"Welcome back"}).waitFor();
+      assert.equal(await page.evaluate(async()=>(await import("/js/state.js")).store.getState().user),null);
+      assert.equal(await page.locator("#header-sync-btn").isDisabled(),true);
+    });
     assert.deepEqual(outbound,[]);
     await context.close();
   }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

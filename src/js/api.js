@@ -1,6 +1,16 @@
-function invoke(cmd, args) {
-  if (!window.__TAURI__) return Promise.reject("Tauri bridge is not available in this context.");
-  return window.__TAURI__.core.invoke(cmd, args);
+import {store} from "./state.js";
+async function invoke(cmd, args) {
+  if (!window.__TAURI__) throw "Tauri bridge is not available in this context.";
+  const userAtRequest=store.getState().user;
+  try {return await window.__TAURI__.core.invoke(cmd, args);}
+  catch(error) {
+    // A delayed failure from an old login must not clear a newer login.
+    if(userAtRequest && store.getState().user===userAtRequest &&
+      String(error).startsWith("authentication error: your local session has ended;")) {
+      window.dispatchEvent(new Event("native-session-ended"));
+    }
+    throw error;
+  }
 }
 
 export const auth = {

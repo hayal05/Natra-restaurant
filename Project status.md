@@ -120,3 +120,20 @@ security tests, six Edge scenarios (seven including the parent test), 178 Rust
 unit tests, trusted provisioning utility, MSI and NSIS packaging. One illustrative
 Rust doc test remains ignored. These fixtures do not certify actual packaged
 WebView/physical-printer or live multi-device acceptance. Stage 3B is next.
+
+## Native business authorization — stage 3B
+
+All 48 legacy business IPC commands now require native session authority. Six
+POS/read commands permit active staff or administrators; administrative changes,
+financial reports/corrections, settings and exports require admin. Checkout
+records the native cashier, ignoring caller-supplied attribution. Account changes
+and expiry revoke authority; logout waits for admitted local work. Staff routing
+and native-expiry handling match the policy. Retired direct-Turso enable/run IPC
+paths reject rather than bypassing the closed Neon gate.
+
+See [Business authorization](cloud/BUSINESS_AUTHORIZATION.md). Local verification:
+133 Node tests and frontend module syntax passed. Added native and Edge tests
+require green Windows CI for this commit before proceeding. Source implementation
+completes the first of the eight remaining work areas; seven production work
+areas remain, including actual packaged runtime/printer acceptance and approved
+staging provisioning. No credentials or live flags changed.

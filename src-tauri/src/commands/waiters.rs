@@ -1,31 +1,36 @@
 //! Tauri commands for waiter management & receivables.
 use tauri::State;
 use crate::database::Db;
+use crate::sync::cloud_bridge::{CloudBridge, BusinessPermission};
 use crate::errors::AppResult;
 use crate::models::{Sale, SaleItem, Waiter};
 use crate::services::waiter_service::{self, WaiterReceivable};
 
 #[tauri::command]
-pub fn create_waiter(db: State<Db>, full_name: String, phone: Option<String>, profile_photo: Option<String>) -> AppResult<Waiter> {
+pub fn create_waiter(db: State<Db>, bridge: State<CloudBridge>, full_name: String, phone: Option<String>, profile_photo: Option<String>) -> AppResult<Waiter> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::create_waiter(&conn, &full_name, phone.as_deref(), profile_photo.as_deref())
 }
 
 #[tauri::command]
-pub fn list_waiters(db: State<Db>, only_active: bool) -> AppResult<Vec<Waiter>> {
+pub fn list_waiters(db: State<Db>, bridge: State<CloudBridge>, only_active: bool) -> AppResult<Vec<Waiter>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Pos)?;
     waiter_service::list_waiters(&conn, only_active)
 }
 
 #[tauri::command]
-pub fn set_waiter_active(db: State<Db>, waiter_id: i64, is_active: bool) -> AppResult<()> {
+pub fn set_waiter_active(db: State<Db>, bridge: State<CloudBridge>, waiter_id: i64, is_active: bool) -> AppResult<()> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::set_waiter_active(&conn, waiter_id, is_active)
 }
 
 #[tauri::command]
-pub fn list_waiter_receivables(db: State<Db>) -> AppResult<Vec<WaiterReceivable>> {
+pub fn list_waiter_receivables(db: State<Db>, bridge: State<CloudBridge>) -> AppResult<Vec<WaiterReceivable>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::list_receivables(&conn)
 }
 
@@ -33,8 +38,9 @@ pub fn list_waiter_receivables(db: State<Db>) -> AppResult<Vec<WaiterReceivable>
 /// dashboard's receivable total is summed from, so "view sources" always
 /// matches the number shown next to it.
 #[tauri::command]
-pub fn list_waiter_receivable_sales(db: State<Db>, waiter_id: i64) -> AppResult<Vec<Sale>> {
+pub fn list_waiter_receivable_sales(db: State<Db>, bridge: State<CloudBridge>, waiter_id: i64) -> AppResult<Vec<Sale>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::list_receivable_sales(&conn, waiter_id)
 }
 
@@ -42,13 +48,15 @@ pub fn list_waiter_receivable_sales(db: State<Db>, waiter_id: i64) -> AppResult<
 /// `list_waiter_receivable_sales` sums, broken down to item/unit-price
 /// level for the "view sources" popup.
 #[tauri::command]
-pub fn list_waiter_receivable_sale_items(db: State<Db>, waiter_id: i64) -> AppResult<Vec<SaleItem>> {
+pub fn list_waiter_receivable_sale_items(db: State<Db>, bridge: State<CloudBridge>, waiter_id: i64) -> AppResult<Vec<SaleItem>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::list_receivable_sale_items(&conn, waiter_id)
 }
 
 #[tauri::command]
-pub fn settle_waiter(db: State<Db>, waiter_id: i64) -> AppResult<usize> {
+pub fn settle_waiter(db: State<Db>, bridge: State<CloudBridge>, waiter_id: i64) -> AppResult<usize> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     waiter_service::settle_waiter(&conn, waiter_id)
 }

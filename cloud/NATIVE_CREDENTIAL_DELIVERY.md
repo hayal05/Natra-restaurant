@@ -150,5 +150,5 @@ API references: [Windows CREDENTIALW](https://learn.microsoft.com/en-us/windows/
 Stage 3A also requires the data endpoint's exact HTTPS origin in the bundled
 CSP connect-src before native credential availability/delivery. No remote origin
 is currently pinned. Broker requests remain native; approved data transport
-uses WebView fetch. See [WebView hardening](WEBVIEW_HARDENING.md). Legacy business
-IPC authorization and packaged runtime acceptance remain production blockers.
+uses WebView fetch. See [WebView hardening](WEBVIEW_HARDENING.md). [Business IPC authorization](BUSINESS_AUTHORIZATION.md) is implemented in source;
+packaged runtime acceptance remains a production blocker.

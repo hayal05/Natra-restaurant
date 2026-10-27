@@ -4,6 +4,7 @@
  */
 
 import { store } from "./state.js";
+import {canVisit, landingFor} from "./auth/access.js";
 
 const routes = new Map();
 let getContainer = null;
@@ -41,8 +42,9 @@ async function resolve() {
   const { user } = store.getState();
 
   if (!def) return;
-  if (def.public && user) { navigate("/dashboard"); return; }
+  if (def.public && user) { navigate(landingFor(user)); return; }
   if (!def.public && !user) { navigate("/login"); return; }
+  if (!def.public && !canVisit(user, path)) { navigate(landingFor(user)); return; }
   if (!getContainer) return;
 
   const outlet = getContainer(def);

@@ -1,6 +1,8 @@
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::State;
 use crate::database::Db;
+use crate::sync::cloud_bridge::{CloudBridge, BusinessPermission};
 use crate::errors::AppResult;
 use crate::services::month_closing_service::{self, ClosingState, MaterialBalance};
 
@@ -13,9 +15,9 @@ pub struct ClosingView {
 }
 
 #[tauri::command]
-pub fn get_material_month_closing(db: State<Db>, month: String) -> AppResult<ClosingView> {
-    use rusqlite::OptionalExtension;
+pub fn get_material_month_closing(db: State<Db>, bridge: State<CloudBridge>, month: String) -> AppResult<ClosingView> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     let materials = month_closing_service::preview(&conn, &month)?;
     let record: Option<(i64,String)> = conn.query_row(
         "SELECT id,status FROM raw_material_month_closings WHERE period_month=?1",
@@ -35,16 +37,22 @@ pub fn get_material_month_closing(db: State<Db>, month: String) -> AppResult<Clo
 }
 
 #[tauri::command]
-pub fn save_material_month_draft(db: State<Db>, month: String, remaining: Vec<(i64,f64)>) -> AppResult<ClosingState> {
-    month_closing_service::save_draft(&mut db.lock(), &month, &remaining)
+pub fn save_material_month_draft(db: State<Db>, bridge: State<CloudBridge>, month: String, remaining: Vec<(i64,f64)>) -> AppResult<ClosingState> {
+    let mut conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
+    month_closing_service::save_draft(&mut conn, &month, &remaining)
 }
 
 #[tauri::command]
-pub fn close_material_month(db: State<Db>, month: String) -> AppResult<ClosingState> {
-    month_closing_service::close_month(&mut db.lock(), &month)
+pub fn close_material_month(db: State<Db>, bridge: State<CloudBridge>, month: String) -> AppResult<ClosingState> {
+    let mut conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
+    month_closing_service::close_month(&mut conn, &month)
 }
 
 #[tauri::command]
-pub fn reopen_material_month(db: State<Db>, month: String, reason: String) -> AppResult<()> {
-    month_closing_service::reopen_month(&mut db.lock(), &month, &reason)
+pub fn reopen_material_month(db: State<Db>, bridge: State<CloudBridge>, month: String, reason: String) -> AppResult<()> {
+    let mut conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
+    month_closing_service::reopen_month(&mut conn, &month, &reason)
 }

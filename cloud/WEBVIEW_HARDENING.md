@@ -8,8 +8,8 @@ navigation and new windows; developer tools are disabled in its configuration.
 All 60 registered application commands are enrolled in the Tauri application
 manifest and granted explicitly to the local main window only. Registry drift
 is tested. This restricts execution context, not business roles: native session
-and role checks on legacy business commands remain stage 3B and a production
-blocker. Existing native cloud-administrator checks remain in place.
+and role checks on legacy business commands are implemented in
+[stage 3B](BUSINESS_AUTHORIZATION.md); packaged runtime acceptance remains open. Existing native cloud-administrator checks remain in place.
 
 Charts, backup status, numeric attributes and printable cells escape stored
 values. Portraits accept bounded raster base64 data URLs only. Receipts and

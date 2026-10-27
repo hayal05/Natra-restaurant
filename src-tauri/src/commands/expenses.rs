@@ -3,13 +3,14 @@
 use tauri::State;
 
 use crate::database::Db;
+use crate::sync::cloud_bridge::{CloudBridge, BusinessPermission};
 use crate::errors::AppResult;
 use crate::models::Expense;
 use crate::services::financial_service::{self, ProfitSummary};
 
 #[tauri::command]
 pub fn create_expense(
-    db: State<Db>,
+    db: State<Db>, bridge: State<CloudBridge>,
     category: String,
     description: Option<String>,
     amount: f64,
@@ -17,6 +18,7 @@ pub fn create_expense(
     note: Option<String>,
 ) -> AppResult<Expense> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     financial_service::create_expense(
         &conn,
         &category,
@@ -28,15 +30,17 @@ pub fn create_expense(
 }
 
 #[tauri::command]
-pub fn list_expenses(db: State<Db>, from: Option<String>, to: Option<String>) -> AppResult<Vec<Expense>> {
+pub fn list_expenses(db: State<Db>, bridge: State<CloudBridge>, from: Option<String>, to: Option<String>) -> AppResult<Vec<Expense>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     financial_service::list_expenses(&conn, from.as_deref(), to.as_deref())
 }
 
 /// Full profit formula (sales - ready-made costs - raw-material costs
 /// - other expenses), optionally scoped to a date range.
 #[tauri::command]
-pub fn calculate_profit(db: State<Db>, from: Option<String>, to: Option<String>) -> AppResult<ProfitSummary> {
+pub fn calculate_profit(db: State<Db>, bridge: State<CloudBridge>, from: Option<String>, to: Option<String>) -> AppResult<ProfitSummary> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     financial_service::calculate_profit(&conn, from.as_deref(), to.as_deref())
 }

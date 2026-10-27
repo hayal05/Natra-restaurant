@@ -1,3 +1,4 @@
+import {landingFor} from "./auth/access.js";
 import * as api from "./api.js";
 import { endNativeSession } from "./auth/session.js";
 import { createSyncNowController } from "./sync/sync_now.js";
@@ -18,7 +19,7 @@ function buildLayouts() {
   shell.innerHTML = `
     <aside class="sidebar"><div class="sidebar-brand"><img src="assets/logo.svg" alt="NATRA"/><span class="sidebar-brand-natra">NATRA</span><span class="sidebar-brand-name">Cashier</span></div><nav class="sidebar-nav" id="sidebar-nav"></nav><div class="sidebar-footer"><div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem"><span id="current-user-label" style="color:var(--color-paper-ink-soft);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span><button id="logout-btn" style="color:var(--color-navy-bright);font-size:var(--text-sm);font-weight:650">Log out</button></div><div style="margin-top:.45rem;color:#6f88a3;font-size:.68rem">NATRA Management</div></div></aside>
     <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div><button id="header-sync-btn" class="btn btn-primary btn-sm" type="button" disabled title="Cloud synchronization is not configured yet" aria-label="Sync now (not yet available)">↻ Sync Now</button></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
-  appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"));
+  appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"),store.getState().user);
   setHeaderSyncStatus(shell, "ready", false);
   const manualSync=createSyncNowController({bridge:api.cloudSync,
     getUserKey:()=>store.getState().user?.id??null,
@@ -29,7 +30,12 @@ function buildLayouts() {
     catch {pushToast("Synchronization did not finish. Retry when ready.","error");}
   });
   let syncUser=store.getState().user;
-  store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;manualSync.invalidate();void manualSync.refresh();}});
+  store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;renderNavItems(shell.querySelector("#sidebar-nav"),user);manualSync.invalidate();void manualSync.refresh();}});
+  window.addEventListener("native-session-ended",()=>{
+    if(!store.getState().user)return;
+    manualSync.invalidate();setUser(null);setSettings(null);navigate("/login");
+    pushToast("Your local session ended. Please sign in again.","info");
+  });
   window.addEventListener("offline",()=>manualSync.invalidate());
   window.addEventListener("online",()=>{void manualSync.refresh();});
   void manualSync.refresh();
@@ -116,5 +122,5 @@ async function bootstrap(){
   let initialized=false;try{initialized=await api.auth.isInitialized()}catch(err){pushToast(typeof err==="string"?err:"Couldn't reach the local database.","error",0)}
   if(!initialized){navigate("/setup");return} navigate("/login");
 }
-export async function completeLogin(user){setUser(user);try{setSettings(await api.settings.get())}catch(err){pushToast(typeof err==="string"?err:"Couldn't load settings.","error")}navigate("/dashboard")}
+export async function completeLogin(user){setUser(user);try{setSettings(await api.settings.get())}catch(err){pushToast(typeof err==="string"?err:"Couldn't load settings.","error")}navigate(landingFor(user))}
 bootstrap();
