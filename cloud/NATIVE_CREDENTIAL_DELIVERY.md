@@ -144,3 +144,11 @@ gate before the remaining release criteria are satisfied.
 
 API references: [Windows CREDENTIALW](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw),
 [WinHttpSetOption](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpsetoption).
+
+## WebView policy prerequisite
+
+Stage 3A also requires the data endpoint's exact HTTPS origin in the bundled
+CSP connect-src before native credential availability/delivery. No remote origin
+is currently pinned. Broker requests remain native; approved data transport
+uses WebView fetch. See [WebView hardening](WEBVIEW_HARDENING.md). Legacy business
+IPC authorization and packaged runtime acceptance remain production blockers.

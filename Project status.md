@@ -114,3 +114,9 @@ See [WebView hardening](cloud/WEBVIEW_HARDENING.md). Windows CI must pass for
 this commit before proceeding. Legacy business-command native session/role
 authorization is the next stage (3B), followed by staging/runtime/printer and
 other production acceptance. Live sync remains disabled.
+
+Stage 3A source commit `0e1915f` passed Windows CI `40546264035`: 129 Node
+security tests, six Edge scenarios (seven including the parent test), 178 Rust
+unit tests, trusted provisioning utility, MSI and NSIS packaging. One illustrative
+Rust doc test remains ignored. These fixtures do not certify actual packaged
+WebView/physical-printer or live multi-device acceptance. Stage 3B is next.

@@ -38,7 +38,7 @@ PGlite and generated test keys. None contact live Neon. See
 | --- | --- | --- |
 | Native authorization | Backend user/role-bound lease; logout/revocation tests | Administrator-owned native session and callback checks added in source; live WebView acceptance pending |
 | Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Disabled broker and native OS delivery source added; actual provisioning and staging acceptance pending |
-| WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Review/remediation pending |
+| WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Stage 3A source and Edge fixtures added; legacy business-command authorization and packaged runtime/printer acceptance pending |
 | Financial conflicts | Reviewed handling of two offline settlements/reversals and dependency conflicts; no silent financial skips | Resolution workflow pending |
 | Ledger safety | Entity-specific validation and auditable rejected-event repair/quarantine | Production policy pending |
 | Database roles | Separate admin/runtime role and helper/table/schema/sequence grant review | Source migration 015 and role regressions added; staging/live evidence pending |

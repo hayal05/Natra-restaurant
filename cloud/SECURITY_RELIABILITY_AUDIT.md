@@ -31,20 +31,20 @@ stale-callback rejection, fresh lease acquisition and shared-guard release.
 
 ## Open findings — live activation blocked
 
-1. **Native identity and credential lifecycle:** the next source step adds
-   credential-verified native administrator ownership, per-callback account
-   checks and lease revocation on logout/account/session changes. See
-   [Native authorization](NATIVE_SYNC_AUTHORIZATION.md). Secure fresh-token
-   delivery now has [native OS storage/transport source](NATIVE_CREDENTIAL_DELIVERY.md). The separate disabled
-   [broker source](CREDENTIAL_BROKER.md) adds approved subject mappings, fresh
-   issuance and revocation of mapped running sessions; deployment/provisioning
-   and universal bearer/metadata revocation policy remain pending. Process environment delivery is still a staging
-   adapter, not an approved secure provisioner.
-2. **WebView hardening:** `tauri.conf.json` currently has `csp: null`; existing
-   application HTML rendering and IPC access need a focused injection and
-   least-privilege review before exposing new credentials. A broad unrelated
-   UI rewrite is outside this audit's fix. Test malicious stored text in the
-   actual Windows WebView and verify remote navigation/IPC restrictions.
+1. **Native identity and credential lifecycle:** credential-verified native
+   administrator ownership, per-callback account checks and lease revocation
+   are implemented. See [Native authorization](NATIVE_SYNC_AUTHORIZATION.md).
+   [Native OS delivery](NATIVE_CREDENTIAL_DELIVERY.md) and the disabled
+   [broker](CREDENTIAL_BROKER.md) replace environment-token delivery with approved
+   mappings and fresh issuance. Deployment/provisioning, staging acceptance and
+   universal bearer/metadata revocation policy remain pending.
+2. **WebView hardening:** stage 3A implements bundled-script CSP, escaped stored
+   text, bounded raster portraits, sandboxed printing, denied navigation/popups
+   and an explicit local-main command capability. Edge fixtures and Rust policy
+   tests cover these source changes. See [WebView hardening](WEBVIEW_HARDENING.md).
+   Legacy business-command native session/role authorization remains stage 3B.
+   Actual packaged WebView navigation/IPC, physical printing and approved exact
+   data-origin staging acceptance are still required; no remote origin is pinned.
 3. **Offline business conflicts:** distinct events settling or reversing the
    same sale on two disconnected installations can encounter an already
    changed target. Current handlers reject and roll back the page rather than
