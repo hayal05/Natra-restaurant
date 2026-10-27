@@ -128,7 +128,8 @@ origins and logout before business transfer. Rust tests cover packet/response
 binding/deadlines, native login/lease race rejection, and an isolated synthetic
 Windows credential-store read/write/remove roundtrip. A native policy test
 constructs the HTTP handles without sending, checking the connection-attempt
-count, TLS mask and request-option setup. Test entries use a separate
+count, response-header bound and successful explicit TLS/request-option setup. The TLS protocol
+option is set-only; the test does not attempt to query that unsupported value. Test entries use a separate
 `.../Sync/Test/` namespace and are removed, including on test failure. No actual
 server credential is provisioned in CI. The provisioning utility is compiled
 with the Windows build and included separately from the MSI/NSIS executables.

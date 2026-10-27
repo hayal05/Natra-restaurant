@@ -73,16 +73,18 @@ fn request_handle(connection: &Handle) -> AppResult<Handle> { unsafe {
 fn winhttp_session_applies_single_attempt_and_modern_tls_without_sending() {
     let session=client_session().unwrap();
     unsafe {
-        for (code,expected) in [(WINHTTP_OPTION_CONNECT_RETRIES,1),
-            (WINHTTP_OPTION_SECURE_PROTOCOLS,WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2|WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3)] {
-            let mut actual=0u32;let mut size=4u32;
-            assert_ne!(WinHttpQueryOption(session.0,code,(&mut actual as *mut u32).cast(),&mut size),0);
-            assert_eq!(actual,expected);
-        }
+        // TLS and disabled-feature options are set-only. Their setters are
+        // checked by construction; query only options documented as readable.
         let host=wide("broker.example.invalid");
         let connection=handle(WinHttpConnect(session.0,host.as_ptr(),443,0)).unwrap();
-        // WinHttpConnect/OpenRequest allocate handles; no request is sent here.
-        let _request=request_handle(&connection).unwrap();
+        let request=request_handle(&connection).unwrap(); // No send or receive.
+        for (h,code,expected) in [(&session,WINHTTP_OPTION_CONNECT_RETRIES,1),
+            (&request,WINHTTP_OPTION_CONNECT_RETRIES,1),(&request,WINHTTP_OPTION_MAX_RESPONSE_HEADER_SIZE,16384)] {
+            let mut actual=0u32;let mut size=4u32;
+            let queried=WinHttpQueryOption(h.0,code,(&mut actual as *mut u32).cast(),&mut size);
+            assert_ne!(queried,0,"policy query {code} failed: {}",GetLastError());
+            assert_eq!(actual,expected);
+        }
     }
 }
 pub(super) fn request(p: &Provision) -> AppResult<Zeroizing<Vec<u8>>> { unsafe {
