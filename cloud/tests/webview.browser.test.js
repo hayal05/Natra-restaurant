@@ -149,11 +149,15 @@ test("browser enforces the WebView policy while rendering app data and print fra
     });
     await t.test("native expiry clears the active screen and returns to login",async()=>{
       await page.evaluate(async()=>{
+        const content=document.createElement("div");content.textContent="Private operation";
+        (await import("/js/components/modal.js")).openModal({title:"Pending operation",content});
         window.expireSession=true;
         await (await import("/js/api.js")).settings.get().catch(()=>{});
       });
       await page.getByRole("heading",{name:"Welcome back"}).waitFor();
       assert.equal(await page.evaluate(async()=>(await import("/js/state.js")).store.getState().user),null);
+      assert.equal(await page.locator(".modal-backdrop").count(),0);
+      assert.equal(await page.locator("#app-outlet > *").count(),0);
       assert.equal(await page.locator("#header-sync-btn").isDisabled(),true);
     });
     assert.deepEqual(outbound,[]);

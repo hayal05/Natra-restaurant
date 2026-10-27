@@ -1,3 +1,4 @@
+import {closeModal} from "./components/modal.js";
 import {landingFor} from "./auth/access.js";
 import * as api from "./api.js";
 import { endNativeSession } from "./auth/session.js";
@@ -33,7 +34,7 @@ function buildLayouts() {
   store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;renderNavItems(shell.querySelector("#sidebar-nav"),user);manualSync.invalidate();void manualSync.refresh();}});
   window.addEventListener("native-session-ended",()=>{
     if(!store.getState().user)return;
-    manualSync.invalidate();setUser(null);setSettings(null);navigate("/login");
+    manualSync.invalidate();closeModal();shell.querySelector("#app-outlet").replaceChildren();setUser(null);setSettings(null);navigate("/login");
     pushToast("Your local session ended. Please sign in again.","info");
   });
   window.addEventListener("offline",()=>manualSync.invalidate());
@@ -41,7 +42,7 @@ function buildLayouts() {
   void manualSync.refresh();
   shell.querySelector("#logout-btn").addEventListener("click",async()=>{
     manualSync.invalidate();
-    try {await endNativeSession({logout:api.auth.logout,clearUser:()=>setUser(null),navigate});}
+    try {await endNativeSession({logout:api.auth.logout,clearUser:()=>{closeModal();shell.querySelector("#app-outlet").replaceChildren();setUser(null);setSettings(null);},navigate});}
     catch {pushToast("Could not finish logging out. Please try again.","error");}
   });
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
