@@ -72,3 +72,12 @@ explains why CREATE access to a searched schema must be restricted.
 No live migration, grant, role, credential, merge, deployment or activation was
 performed by this source follow-up. Other production blockers remain recorded
 in `SECURITY_RELIABILITY_AUDIT.md` and `PRODUCTION_READINESS.md`.
+
+## Credential-session revocation source (017)
+
+Migration 017 adds SECURITY INVOKER assert_sync_session_not_revoked(uuid), with
+PUBLIC execution revoked and pg_temp last. Review EXECUTE plus SELECT on the
+non-secret sync_revoked_sessions table for the trusted data runtime; its existing
+upload/pull/terminal/allowance functions call that helper. The revocation role
+also needs INSERT on that table. Runtime credential-table access is not required.
+No grants are automatically applied. See [acceptance](PROVISIONING_ACCEPTANCE.md).

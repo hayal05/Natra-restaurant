@@ -104,10 +104,12 @@ Credential revocation is scoped, idempotent and marks only its mapped running
 sessions failed. Subsequent transfers fail existing session checks; new issuance
 fails. Completed sessions and quota history are retained, and unrelated
 installations/credentials/legacy issuer sessions are untouched. A completed
-session's already-issued token may still perform existing terminal retry or
-allowance metadata requests until its JWT expires; this step does not add a
-universal bearer-token denylist. Native logout/remote cancellation policy and
-short-lived token handling must be finished with the native delivery step.
+session's already-issued token is also blocked from terminal retry and allowance
+requests after source migration 017: all mapped sessions enter a non-secret
+revocation table checked by all five API SQL entry points. This applies to
+credential-mapped sessions; unrelated legacy issuer sessions remain unchanged.
+See [Provisioning acceptance](PROVISIONING_ACCEPTANCE.md). Native logout remains
+local-only and does not remotely erase bearer tokens.
 
 ## Role and release review still required
 
@@ -142,3 +144,10 @@ regressions, not real multi-connection or live-issuer acceptance evidence.
 Step 2B implements the native storage/transport requirements above in source,
 behind the unchanged closed gate. This document remains the broker-side protocol;
 see the native delivery document for current behavior and remaining acceptance.
+
+## Provisioning/revocation follow-up
+
+[Provisioning acceptance](PROVISIONING_ACCEPTANCE.md) documents migration 017,
+the trusted stdin-only packet builder, generated-key offline lifecycle tests and
+the separately authorized staging procedure. Apply through 017 and review new
+runtime-helper/table privileges before staging. No live grants were changed.

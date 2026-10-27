@@ -37,7 +37,9 @@ stale-callback rejection, fresh lease acquisition and shared-guard release.
    [Native OS delivery](NATIVE_CREDENTIAL_DELIVERY.md) and the disabled
    [broker](CREDENTIAL_BROKER.md) replace environment-token delivery with approved
    mappings and fresh issuance. Deployment/provisioning, staging acceptance and
-   universal bearer/metadata revocation policy remain pending.
+   actual issuer/key-rotation acceptance remain pending. Migration 017 now blocks
+   all five API routes for revoked credential-mapped sessions, including terminal
+   retries/metadata. See [Provisioning acceptance](PROVISIONING_ACCEPTANCE.md).
 2. **WebView hardening:** stage 3A implements bundled-script CSP, escaped stored
    text, bounded raster portraits, sandboxed printing, denied navigation/popups
    and an explicit local-main command capability. Edge fixtures and Rust policy

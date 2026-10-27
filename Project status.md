@@ -137,3 +137,20 @@ require green Windows CI for this commit before proceeding. Source implementatio
 completes the first of the eight remaining work areas; seven production work
 areas remain, including actual packaged runtime/printer acceptance and approved
 staging provisioning. No credentials or live flags changed.
+
+## Credential provisioning/revocation — next work area, source follow-up
+
+Added a trusted stdin-only provisioning packet builder bound to independently
+approved identity/endpoint metadata, plus migration 017 to block every mapped
+bearer session after credential revocation, including completed-session retries
+and allowance reads. It preserves ledger/quota history and unrelated sessions.
+Generated-key lifecycle regressions use the actual broker/data/JWT/adapters with
+embedded PostgreSQL and no network. See [Provisioning acceptance](cloud/PROVISIONING_ACCEPTANCE.md)
+for role dependencies, limits and the concrete staging procedure.
+
+Local verification passed all 144 Node tests, including 11 new provisioning/
+revocation regressions. This source work requires green Windows CI. Actual secure operator delivery,
+real separate-connection/TLS/two-device and issuer/key-rotation staging acceptance
+remain pending separate authorization; this does not mark the production gate
+accepted. No actual credential was provisioned, SQL applied, service deployed,
+merge made or live flag enabled. The other work areas remain unchanged.
