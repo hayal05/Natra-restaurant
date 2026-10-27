@@ -1,6 +1,6 @@
 # Natra Restaurant — Project Status
 
-Updated: 26 October 2026 (Africa/Addis_Ababa)
+Updated: 27 October 2026 (Africa/Addis_Ababa)
 
 Branch: `feature/neon-sync-installation-id`
 Review: [PR #10](https://github.com/hayal05/Natra-restaurant/pull/10), unmerged.
@@ -34,7 +34,7 @@ functions. Restricted-role and temporary-shadow regressions pass locally.
 and the remaining environment review. No live grants or gates changed.
 The follow-up commit requires Windows CI before being treated as a build.
 
-## Current step — native sync authorization
+## Completed step — native sync authorization
 
 Native credential-verified administrator sessions now own staged cloud leases.
 Configuration and every local exchange callback check the current account.
@@ -42,9 +42,20 @@ Logout, reauthentication, account changes, expiry and panic recovery revoke old
 leases. Frontend logout waits for native revocation; reload starts anonymous.
 See [Native authorization](cloud/NATIVE_SYNC_AUTHORIZATION.md).
 
-The local Node suite passes 109 tests. This step requires Windows CI for Rust
-and MSI/NSIS verification. Secure fresh-token provisioning and renewal are the
-next separate implementation step; live synchronization remains disabled.
+This step passed Windows CI `40378138213` at `1aacfd3`: 109 Node tests,
+171 Rust tests and MSI/NSIS builds. Live synchronization remains disabled.
+
+## Current step — token broker (2A)
+
+The server half of secure token delivery adds a separately disabled broker,
+digest-only provisioned credentials, approved native-user/cloud-subject mapping,
+fresh scoped session issuance and credential revocation. SQL 016 is unapplied.
+See [Credential broker](cloud/CREDENTIAL_BROKER.md). The next step (2B) is native
+OS credential storage, secure provisioning and bounded broker transport; the
+desktop has not been connected to this broker and still cannot start live sync.
+
+The expanded Node suite passes 122 tests locally. The broker source commit
+requires Windows CI before advancing to native delivery (2B).
 
 ## Verification
 

@@ -64,7 +64,9 @@ legacy IPC command has native access control or that the WebView is hardened.
 CSP/injection/IPC review remains a separate blocker. This source code does not
 protect against an attacker who can alter the local database or desktop process.
 
-Secure fresh-token delivery/renewal is still pending. The process-environment
+The disabled server-side [credential broker](CREDENTIAL_BROKER.md) now provides
+a source path for fresh issuance and mapped-session revocation.
+Native secure fresh-token delivery/renewal is still pending. The process-environment
 adapter is not a production credential broker; binding an approved server
 subject/workspace entitlement to the verified native user, reissuing sessions,
 secure storage/rotation and remote revocation need separate implementation and

@@ -37,7 +37,7 @@ PGlite and generated test keys. None contact live Neon. See
 | Gate | Required evidence before live release | Current state |
 | --- | --- | --- |
 | Native authorization | Backend user/role-bound lease; logout/revocation tests | Administrator-owned native session and callback checks added in source; live WebView acceptance pending |
-| Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Staging CLI/environment adapter only |
+| Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Disabled broker source and grant/revocation SQL added; native OS delivery and staging acceptance pending |
 | WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Review/remediation pending |
 | Financial conflicts | Reviewed handling of two offline settlements/reversals and dependency conflicts; no silent financial skips | Resolution workflow pending |
 | Ledger safety | Entity-specific validation and auditable rejected-event repair/quarantine | Production policy pending |
@@ -71,7 +71,7 @@ through Task 35 remain historical snapshots; they do not include Tasks 36–43.
    workspace/installation identities, durable cursors and pending event IDs.
    A restored/cloned database must not silently become a second active device
    with the same installation identity; approve the clone/re-enrollment policy.
-3. Review SQL 001–015 in order and least-privilege grants. Run them only in the
+3. Review SQL 001–016 in order and least-privilege grants. Run them only in the
    separately approved environment. Provision server secrets/signing material
    outside source and desktop bundles; publish public verification keys only.
 4. Configure exact issuer/audience/JWKS and confirmed WebView origins. Test bad
@@ -118,3 +118,7 @@ execution/search-path gap; the live-role acceptance gate remains open.
 The native-authorization step adds administrator-owned login generations and
 per-callback account checks. See [Native authorization](NATIVE_SYNC_AUTHORIZATION.md).
 This does not supply secure cloud-token provisioning or remote bearer revocation.
+
+Token delivery step 2A adds a separate disabled issuer broker and unapplied SQL
+016. See [Credential broker](CREDENTIAL_BROKER.md). Native credential storage and
+broker transport (2B) remain unimplemented; no live token delivery is activated.
