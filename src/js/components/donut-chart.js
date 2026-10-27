@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Donut chart — an SVG ring built from stacked stroke-dasharray segments
  * (no charting library), with a legend and a center total. Used for the
@@ -73,8 +74,8 @@ export function renderDonutChart(
     const center = document.createElement("div");
     center.className = "donut-chart-center";
     center.innerHTML = `
-      <div class="donut-chart-center-value">${centerValue}</div>
-      ${centerLabel ? `<div class="donut-chart-center-label">${centerLabel}</div>` : ""}
+      <div class="donut-chart-center-value">${escapeHtml(centerValue)}</div>
+      ${centerLabel ? `<div class="donut-chart-center-label">${escapeHtml(centerLabel)}</div>` : ""}
     `;
     figure.appendChild(center);
   }
@@ -89,8 +90,8 @@ export function renderDonutChart(
     const tone = SEGMENT_TONES[i % SEGMENT_TONES.length];
     row.innerHTML = `
       <span class="donut-legend-swatch" style="background: var(--color-${tone})"></span>
-      <span class="donut-legend-label" title="${item.label}">${item.label}</span>
-      <span class="donut-legend-value">${formatValue(item.value)}</span>
+      <span class="donut-legend-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+      <span class="donut-legend-value">${escapeHtml(formatValue(item.value))}</span>
     `;
     legend.appendChild(row);
   });

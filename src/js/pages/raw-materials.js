@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Raw materials: catalog + purchase log. Purchases are independent
  * cost events, not linked to any specific dish (see
@@ -230,10 +231,4 @@ function openPurchaseModal(els, material) {
       saveBtn.disabled = false;
     }
   });
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
 }

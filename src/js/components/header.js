@@ -23,3 +23,45 @@ export function setHeaderActions(headerEl, nodes = []) {
 export function clearHeaderActions(headerEl) {
   setHeaderActions(headerEl, []);
 }
+
+/**
+ * Shared manual-sync status. Availability is supplied by the gated controller.
+ * @param {HTMLElement} headerEl
+ * @param {"offline"|"ready"|"syncing"|"failed"|"completed"} status
+ * @param {boolean} available
+ */
+export function setHeaderSyncStatus(headerEl, status = "ready", available = false) {
+  const button = headerEl.querySelector("#header-sync-btn");
+  if (!button) return;
+  const labels = {
+    offline: "↻ Offline",
+    ready: "↻ Sync Now",
+    syncing: "↻ Syncing…",
+    failed: "↻ Retry Sync",
+    completed: "✓ Synced",
+  };
+  const safeStatus = Object.hasOwn(labels, status) ? status : "ready";
+  button.textContent = labels[safeStatus];
+  button.dataset.syncStatus = safeStatus;
+  button.disabled = !available || safeStatus === "syncing" || safeStatus === "offline";
+  if(!available)delete button.dataset.remainingToday;
+  button.setAttribute("aria-busy", String(safeStatus === "syncing"));
+  button.setAttribute("aria-label", safeStatus === "offline" ? "Sync now (offline)" : !available ? "Sync now (not available)" : labels[safeStatus].replace(/^[↻✓]\s*/,""));
+  button.title = safeStatus === "offline" ? "Connect to the internet, then start synchronization manually" : !available
+    ? "Cloud synchronization is not configured yet"
+    : safeStatus === "syncing"
+      ? "Synchronization is in progress"
+      : safeStatus === "failed"
+        ? "Synchronization failed; retry when ready"
+        : safeStatus === "completed"
+          ? "Last synchronization completed"
+          : "Synchronize new changes";
+  if(available && button.dataset.remainingToday!==undefined)button.title+=` · ${button.dataset.remainingToday} synchronizations remaining (last confirmed)`;
+}
+
+export function setHeaderSyncAllowance(headerEl,allowance) {
+  const button=headerEl.querySelector("#header-sync-btn");
+  if(!button)return;
+  button.dataset.remainingToday=String(allowance.remaining_today);
+  button.title=button.title.replace(/ · .*synchronizations remaining.*$/,"")+` · ${allowance.remaining_today} synchronizations remaining (last confirmed)`;
+}

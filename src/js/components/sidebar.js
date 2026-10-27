@@ -1,3 +1,4 @@
+import {canVisit} from "../auth/access.js";
 export const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: "grid" },
   { path: "/pos", label: "Point of sale", icon: "cart" },
@@ -22,9 +23,9 @@ const ICONS = {
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="4"/></svg>'
 };
 
-export function renderNavItems(navEl) {
+export function renderNavItems(navEl, user) {
   navEl.innerHTML = "";
-  NAV_ITEMS.forEach((item) => {
+  NAV_ITEMS.filter(item => canVisit(user, item.path)).forEach((item) => {
     const link = document.createElement("a");
     link.href = `#${item.path}`;
     link.className = "nav-item";

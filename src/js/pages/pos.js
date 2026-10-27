@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Point of sale. Items are staged in a client-side Current sale cart only.
  * Nothing is recorded as a sale until Complete sale is pressed.
@@ -337,7 +338,7 @@ export async function render(container) {
             const badge = document.createElement("span"); badge.className = `badge ${sale.is_settled ? "badge-sage" : "badge-amber"}`; badge.textContent = sale.is_settled ? "Settled" : "Open"; return badge;
           } },
           { key: "actions", label: "", format: (sale) => {
-            if (sale.is_reversed) return "";
+            if (sale.is_reversed || store.getState().user?.role !== "admin") return "";
             const btn = document.createElement("button");
             btn.className = "btn btn-ghost btn-sm";
             btn.textContent = "Reverse";
@@ -395,7 +396,7 @@ export async function render(container) {
     button.disabled = true;
     button.textContent = "Completing...";
     try {
-      const result = await api.pos.checkout({ waiter_id: waiterId, user_id: store.getState().user?.id ?? null, payment_method: paymentSelect.value, lines, note: null });
+      const result = await api.pos.checkout({ waiter_id: waiterId, payment_method: paymentSelect.value, lines, note: null });
       const completedTotal = Number(result?.sale?.total_amount ?? lines.reduce((sum, line) => {
         const item = allItems.find((candidate) => itemId(candidate) === String(line.item_id));
         return sum + itemPrice(item || {}) * line.quantity;
@@ -447,10 +448,4 @@ export async function render(container) {
       button.disabled = cart.size === 0;
     }
   });
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
 }

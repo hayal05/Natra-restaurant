@@ -99,6 +99,40 @@ pub fn enqueue(
     Ok(())
 }
 
+/// Record a Neon event in the SAME SQLite transaction as its business edit.
+/// Generates a stable UUIDv4 once; future retries must reuse this stored ID.
+/// Do not call for downloaded cloud events or with a locally scoped integer ID.
+#[allow(dead_code)]
+pub fn enqueue_cloud_event(
+    tx: &rusqlite::Transaction<'_>,
+    entity_type: &str,
+    entity_id: &str,
+    operation: &str,
+    payload: &serde_json::Value,
+) -> AppResult<String> {
+    if entity_type.trim().is_empty() || entity_id.trim().is_empty()
+        || !matches!(operation, "upsert" | "delete") || !payload.is_object()
+    {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "invalid cloud outbox event".into(),
+        ).into());
+    }
+    let mut bytes: Vec<u8> = tx.query_row("SELECT randomblob(16)", [], |r| r.get(0))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let event_id = format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32]
+    );
+    tx.execute(
+        "INSERT INTO cloud_outbox(event_id,entity_type,entity_id,operation,payload)
+         VALUES (?1,?2,?3,?4,?5)",
+        rusqlite::params![event_id, entity_type, entity_id, operation, payload.to_string()],
+    )?;
+    Ok(event_id)
+}
+
 /// Oldest-first batch of entries still waiting to be pushed.
 pub fn pending(conn: &Connection, limit: i64) -> AppResult<Vec<QueueEntry>> {
     let mut stmt = conn.prepare(
@@ -173,6 +207,36 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         migrations::run(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn neon_outbox_event_commits_and_has_uuid_v4() {
+        let mut conn = db();
+        let tx = conn.transaction().unwrap();
+        let id = enqueue_cloud_event(&tx, "items", "global-item-id", "upsert",
+            &serde_json::json!({"name":"Coffee"})).unwrap();
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.chars().nth(14), Some('4'));
+        tx.commit().unwrap();
+        let stored: String = conn.query_row(
+            "SELECT event_id FROM cloud_outbox", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(stored, id);
+    }
+
+    #[test]
+    fn neon_outbox_rolls_back_with_failed_business_transaction() {
+        let mut conn = db();
+        {
+            let tx = conn.transaction().unwrap();
+            enqueue_cloud_event(&tx, "items", "global-item-id", "delete",
+                &serde_json::json!({})).unwrap();
+            // No commit: both mutation and event must be rolled back.
+        }
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cloud_outbox", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

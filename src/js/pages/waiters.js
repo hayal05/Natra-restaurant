@@ -1,3 +1,4 @@
+import { setPortrait } from "../utils/html.js";
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { setHeaderActions } from "../components/header.js";
@@ -83,7 +84,7 @@ async function loadWaiters(els) {
 function waiterIdentity(waiter) {
   const wrap=document.createElement("div"); wrap.className="waiter-identity";
   const avatar=document.createElement("div"); avatar.className="waiter-avatar";
-  if(waiter.profile_photo){ avatar.innerHTML=`<img src="${escapeAttr(waiter.profile_photo)}" alt="" />`; } else { avatar.textContent=(waiter.full_name||"?").trim().charAt(0).toUpperCase(); }
+  setPortrait(avatar,waiter.profile_photo,waiter.full_name);
   const name=document.createElement("span"); name.textContent=waiter.full_name; wrap.append(avatar,name); return wrap;
 }
 
@@ -157,7 +158,7 @@ function openAddWaiterModal(els) {
     <div class="field"><label class="field-label" for="waiter-phone">Phone (optional)</label><input class="input" id="waiter-phone" name="phone" type="text" /></div>`;
   let profilePhoto=null;
   const photoInput=form.querySelector("#waiter-photo"); const preview=form.querySelector("#waiter-photo-preview");
-  photoInput.addEventListener("change",async()=>{ const file=photoInput.files?.[0]; if(!file)return; if(!file.type.startsWith("image/")){pushToast("Please select an image file.","error");photoInput.value="";return;} try{profilePhoto=await prepareProfilePhoto(file); preview.innerHTML=`<img src="${escapeAttr(profilePhoto)}" alt="Profile preview" />`;}catch{pushToast("Couldn't process that image.","error");photoInput.value="";} });
+  photoInput.addEventListener("change",async()=>{ const file=photoInput.files?.[0]; if(!file)return; if(!file.type.startsWith("image/")){pushToast("Please select an image file.","error");photoInput.value="";return;} try{profilePhoto=await prepareProfilePhoto(file); setPortrait(preview,profilePhoto);}catch{pushToast("Couldn't process that image.","error");photoInput.value="";} });
   const cancel=document.createElement("button"); cancel.className="btn btn-secondary"; cancel.type="button"; cancel.textContent="Cancel"; cancel.addEventListener("click",closeModal);
   const save=document.createElement("button"); save.className="btn btn-primary"; save.type="button"; save.textContent="Add waiter"; save.addEventListener("click",()=>form.requestSubmit());
   openModal({title:"New waiter",content:form,actions:[cancel,save]});
@@ -167,4 +168,3 @@ function openAddWaiterModal(els) {
 function prepareProfilePhoto(file){
   return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=reject;reader.onload=()=>{const img=new Image();img.onerror=reject;img.onload=()=>{const max=320;const scale=Math.min(1,max/Math.max(img.width,img.height));const canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL("image/jpeg",0.82));};img.src=reader.result;};reader.readAsDataURL(file);});
 }
-function escapeAttr(value){const div=document.createElement("div");div.textContent=value??"";return div.innerHTML.replace(/"/g,"&quot;");}

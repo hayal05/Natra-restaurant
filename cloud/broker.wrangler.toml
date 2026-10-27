@@ -1,0 +1,6 @@
+# Separately reviewed trusted issuer deployment. No enablement flag, secrets,
+# rate-limiter binding or route is configured. Do not deploy without approval.
+name = "natra-sync-credential-broker"
+main = "broker-worker.js"
+compatibility_date = "2026-10-22"
+workers_dev = false

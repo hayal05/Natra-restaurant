@@ -121,6 +121,22 @@ pub struct ClosingState {
     pub lines: Vec<ValuedClosing>,
 }
 
+// Attach stable material identities to closing lines without changing valuation.
+fn closing_material_ids(tx: &rusqlite::Transaction<'_>, lines: &[ValuedClosing]) -> AppResult<Vec<String>> {
+    let installation_id = crate::database::connection::ensure_installation_id(tx)?;
+    let mut ids = Vec::with_capacity(lines.len());
+    for line in lines {
+        let mapped: Option<String> = tx.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [line.raw_material_id], |row| row.get(0),
+        ).optional()?;
+        let entity_id = mapped.unwrap_or_else(|| format!("{installation_id}:{}", line.raw_material_id));
+        crate::database::entity_ids::register(tx, "raw_materials", &entity_id, line.raw_material_id)?;
+        ids.push(entity_id);
+    }
+    Ok(ids)
+}
+
 fn latest_closing(conn: &Connection) -> AppResult<Option<(String, String)>> {
     Ok(conn.query_row(
         "SELECT period_month,status FROM raw_material_month_closings ORDER BY period_month DESC LIMIT 1",
@@ -163,6 +179,193 @@ fn check_sequence(conn: &Connection, month: &str) -> AppResult<()> {
         if status != "closed" {
             return Err(AppError::Validation("close the preceding month first".into()));
         }
+    }
+    Ok(())
+}
+
+/// Import a first-time month-end snapshot in the enclosing cloud transaction.
+/// Revisions and reopen actions require a separate ordered replay path.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_initial_closing(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote month closing".into());
+    if payload.get("action").is_some() { return Err(invalid()); }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    let status = closing.get("status").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    if status != "draft" && status != "closed" { return Err(invalid()); }
+    if existing_closing(tx, month)?.is_some() {
+        return Err(AppError::Validation("existing month closing requires ordered revision replay".into()));
+    }
+    check_sequence(tx, month)?;
+    let lines = closing.get("lines").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let identities = payload.get("material_entity_ids").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    if lines.len() != identities.len() { return Err(invalid()); }
+    let mut resolved = Vec::with_capacity(lines.len());
+    let mut seen = HashSet::new();
+    for (line, identity) in lines.iter().zip(identities) {
+        let entity = identity.as_str().filter(|s| !s.trim().is_empty()).ok_or_else(invalid)?;
+        let local_id = crate::database::entity_ids::lookup(tx, "raw_materials", entity)?
+            .ok_or_else(|| AppError::Validation("unknown material in remote month closing".into()))?;
+        if !seen.insert(local_id) { return Err(invalid()); }
+        let number = |key: &str| -> AppResult<f64> {
+            let value = line.get(key).and_then(|v| v.as_f64()).ok_or_else(invalid)?;
+            if !value.is_finite() || value < 0.0 { return Err(invalid()); }
+            Ok(value)
+        };
+        let opening_qty = number("opening_quantity")?;
+        let opening_value = number("opening_value")?;
+        let purchased_qty = number("purchased_quantity")?;
+        let purchased_value = number("purchased_value")?;
+        let remaining = number("remaining_quantity")?;
+        let closing_value = number("closing_value")?;
+        let consumed = number("consumed_value")?;
+        if remaining > opening_qty + purchased_qty + EPS
+            || (consumed - (opening_value + purchased_value - closing_value)).abs() > 0.01 {
+            return Err(invalid());
+        }
+        resolved.push((local_id, opening_qty, opening_value, purchased_qty,
+            purchased_value, remaining, closing_value));
+    }
+    tx.execute(
+        "INSERT INTO raw_material_month_closings(period_month,status,closed_at)
+         VALUES(?1,?2,CASE WHEN ?2='closed' THEN datetime('now') ELSE NULL END)",
+        params![month,status],
+    )?;
+    let closing_id = tx.last_insert_rowid();
+    for (id,oq,ov,pq,pv,rq,cv) in resolved {
+        tx.execute(
+            "INSERT INTO raw_material_month_closing_lines
+             (closing_id,raw_material_id,opening_quantity,opening_value,purchased_quantity,
+              purchased_value,remaining_quantity,closing_value)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![closing_id,id,oq,ov,pq,pv,rq,cv],
+        )?;
+    }
+    Ok(())
+}
+
+/// Apply an ordered remote draft -> closed transition without recalculating
+/// historical stock values or overwriting an already finalized month.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_closing_finalization(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote closing finalization".into());
+    if payload.get("action").is_some() { return Err(invalid()); }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    if closing.get("status").and_then(|v| v.as_str()) != Some("closed") { return Err(invalid()); }
+    let (id, status) = existing_closing(tx, month)?
+        .ok_or_else(|| AppError::Validation("closing draft must arrive before finalization".into()))?;
+    if status != "draft" || latest_closing(tx)?.map(|(m,_)| m) != Some(month.to_string()) {
+        return Err(AppError::Validation("closing already finalized or out of order".into()));
+    }
+    let lines = closing.get("lines").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let ids = payload.get("material_entity_ids").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    if lines.len() != ids.len() { return Err(invalid()); }
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM raw_material_month_closing_lines WHERE closing_id=?1",
+        [id], |r| r.get(0),
+    )?;
+    if count != lines.len() as i64 { return Err(invalid()); }
+    let mut seen = HashSet::new();
+    let mut values = Vec::with_capacity(lines.len());
+    for (line, identity) in lines.iter().zip(ids) {
+        let identity = identity.as_str().ok_or_else(invalid)?;
+        let material = crate::database::entity_ids::lookup(tx, "raw_materials", identity)?
+            .ok_or_else(|| AppError::Validation("unknown closing material identity".into()))?;
+        if !seen.insert(material) { return Err(invalid()); }
+        let get = |key: &str| -> AppResult<f64> {
+            let x = line.get(key).and_then(|v| v.as_f64()).ok_or_else(invalid)?;
+            if !x.is_finite() || x < 0.0 { return Err(invalid()); }
+            Ok(x)
+        };
+        let oq = get("opening_quantity")?;
+        let ov = get("opening_value")?;
+        let pq = get("purchased_quantity")?;
+        let pv = get("purchased_value")?;
+        let rq = get("remaining_quantity")?;
+        let cv = get("closing_value")?;
+        let consumed = get("consumed_value")?;
+        if rq > oq + pq + EPS || (consumed - (ov + pv - cv)).abs() > 0.01 {
+            return Err(invalid());
+        }
+        values.push((material, oq, ov, pq, pv, rq, cv));
+    }
+    for (material, oq, ov, pq, pv, rq, cv) in values {
+        let changed = tx.execute(
+            "UPDATE raw_material_month_closing_lines SET opening_quantity=?1,opening_value=?2,
+             purchased_quantity=?3,purchased_value=?4,remaining_quantity=?5,closing_value=?6
+             WHERE closing_id=?7 AND raw_material_id=?8",
+            params![oq,ov,pq,pv,rq,cv,id,material],
+        )?;
+        if changed != 1 { return Err(invalid()); }
+    }
+    tx.execute(
+        "UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now'),
+         updated_at=datetime('now') WHERE id=?1 AND status='draft'",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// Replay a later draft snapshot (including after reopening) atomically.
+/// It never changes a finalized month and does not create new purchases.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_closing_draft_revision(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote draft revision".into());
+    if payload.get("action").is_some() { return Err(invalid()); }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    if closing.get("status").and_then(|v| v.as_str()) != Some("draft") { return Err(invalid()); }
+    let (closing_id, status) = existing_closing(tx, month)?
+        .ok_or_else(|| AppError::Validation("draft revision requires existing month".into()))?;
+    if status != "draft" || latest_closing(tx)?.map(|(m,_)| m) != Some(month.to_string()) {
+        return Err(AppError::Validation("cannot revise finalized or earlier month".into()));
+    }
+    let lines = closing.get("lines").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let identities = payload.get("material_entity_ids").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    if lines.len() != identities.len() { return Err(invalid()); }
+    let mut seen = HashSet::new();
+    let mut values = Vec::with_capacity(lines.len());
+    for (line, identity) in lines.iter().zip(identities) {
+        let global_id = identity.as_str().filter(|v| !v.trim().is_empty()).ok_or_else(invalid)?;
+        let id = crate::database::entity_ids::lookup(tx, "raw_materials", global_id)?
+            .ok_or_else(|| AppError::Validation("unknown material in draft revision".into()))?;
+        if !seen.insert(id) { return Err(invalid()); }
+        let number = |key: &str| -> AppResult<f64> {
+            let value = line.get(key).and_then(|v| v.as_f64()).ok_or_else(invalid)?;
+            if !value.is_finite() || value < 0.0 { return Err(invalid()); }
+            Ok(value)
+        };
+        let oq = number("opening_quantity")?;
+        let ov = number("opening_value")?;
+        let pq = number("purchased_quantity")?;
+        let pv = number("purchased_value")?;
+        let rq = number("remaining_quantity")?;
+        let cv = number("closing_value")?;
+        let consumed = number("consumed_value")?;
+        if rq > oq + pq + EPS || (consumed - (ov + pv - cv)).abs() > 0.01 {
+            return Err(invalid());
+        }
+        values.push((id,oq,ov,pq,pv,rq,cv));
+    }
+    tx.execute("DELETE FROM raw_material_month_closing_lines WHERE closing_id=?1", [closing_id])?;
+    for (id,oq,ov,pq,pv,rq,cv) in values {
+        tx.execute(
+            "INSERT INTO raw_material_month_closing_lines
+             (closing_id,raw_material_id,opening_quantity,opening_value,purchased_quantity,
+              purchased_value,remaining_quantity,closing_value)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![closing_id,id,oq,ov,pq,pv,rq,cv],
+        )?;
     }
     Ok(())
 }
@@ -211,7 +414,12 @@ pub fn save_draft(
             )?;
         }
         tx.execute("UPDATE raw_material_month_closings SET updated_at=datetime('now') WHERE id=?1", [closing_id])?;
-        Ok(ClosingState { month: month.into(), status: "draft".into(), lines: valued })
+        let result = ClosingState { month: month.into(), status: "draft".into(), lines: valued };
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "material_month_closings", month, "upsert",
+            &serde_json::json!({ "closing": result, "material_entity_ids": closing_material_ids(tx, &result.lines)? }),
+        )?;
+        Ok(result)
     })
 }
 
@@ -256,7 +464,14 @@ pub fn close_month(conn: &mut Connection, month: &str) -> AppResult<ClosingState
             computed.push(valued);
         }
         tx.execute("UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now'),updated_at=datetime('now') WHERE id=?1", [id])?;
-        Ok(ClosingState { month: month.into(), status: "closed".into(), lines: computed })
+        let result = ClosingState { month: month.into(), status: "closed".into(), lines: computed };
+        // A closing is unique to its workspace and calendar month. Capture
+        // the final valued lines in the same transaction as finalization.
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "material_month_closings", month, "upsert",
+            &serde_json::json!({ "closing": result, "material_entity_ids": closing_material_ids(tx, &result.lines)? }),
+        )?;
+        Ok(result)
     })
 }
 
@@ -279,8 +494,52 @@ pub fn reopen_month(conn: &mut Connection, month: &str, reason: &str) -> AppResu
         tx.execute("INSERT INTO raw_material_closing_audit(closing_id,action,reason) VALUES(?1,'reopen',?2)",
             params![id,reason.trim()])?;
         tx.execute("UPDATE raw_material_month_closings SET status='draft',closed_at=NULL,updated_at=datetime('now') WHERE id=?1",[id])?;
+        crate::sync::queue::enqueue_cloud_event(
+            tx, "material_month_closings", month, "upsert",
+            &serde_json::json!({
+                "closing": { "month": month, "status": "draft" },
+                "action": "reopen",
+                "reason": reason.trim(),
+            }),
+        )?;
         Ok(())
     })
+}
+
+/// Replay a remote reopen after its original close, preserving the audit
+/// reason and refusing to invalidate carry-forward into a later month.
+#[allow(dead_code)]
+pub(crate) fn apply_remote_closing_reopen(
+    tx: &rusqlite::Transaction<'_>, payload: &serde_json::Value,
+) -> AppResult<()> {
+    let invalid = || AppError::Validation("invalid remote closing reopen".into());
+    if payload.get("action").and_then(|v| v.as_str()) != Some("reopen") {
+        return Err(invalid());
+    }
+    let closing = payload.get("closing").ok_or_else(invalid)?;
+    let month = closing.get("month").and_then(|v| v.as_str()).ok_or_else(invalid)?;
+    period(month)?;
+    if closing.get("status").and_then(|v| v.as_str()) != Some("draft") {
+        return Err(invalid());
+    }
+    let reason = payload.get("reason").and_then(|v| v.as_str()).ok_or_else(invalid)?.trim();
+    if reason.len() < 5 { return Err(invalid()); }
+    let (id, status) = existing_closing(tx, month)?
+        .ok_or_else(|| AppError::Validation("closing to reopen does not exist".into()))?;
+    if status != "closed" || latest_closing(tx)?.map(|(m,_)| m) != Some(month.to_string()) {
+        return Err(AppError::Validation("reopen must target latest closed month".into()));
+    }
+    tx.execute(
+        "INSERT INTO raw_material_closing_audit(closing_id,action,reason) VALUES(?1,'reopen',?2)",
+        params![id,reason],
+    )?;
+    let changed = tx.execute(
+        "UPDATE raw_material_month_closings SET status='draft',closed_at=NULL,
+         updated_at=datetime('now') WHERE id=?1 AND status='closed'",
+        [id],
+    )?;
+    if changed != 1 { return Err(invalid()); }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,6 +588,153 @@ mod tests {
     }
 
     #[test]
+    fn remote_draft_revision_replaces_snapshot_and_rejects_closed_month() {
+        let mut conn = db();
+        let m = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        let global_id: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [m.id], |r| r.get(0),
+        ).unwrap();
+        let payload = serde_json::json!({
+            "closing":{"month":"2025-01-01","status":"draft","lines":[{
+                "opening_quantity":0.0,"opening_value":0.0,
+                "purchased_quantity":4.0,"purchased_value":40.0,
+                "remaining_quantity":2.0,"closing_value":20.0,"consumed_value":20.0
+            }]},
+            "material_entity_ids":[global_id]
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("first-draft",1)],
+            |tx,_,_|apply_remote_initial_closing(tx,&payload),
+        ).unwrap();
+        let mut revised = payload.clone();
+        revised["closing"]["lines"][0]["remaining_quantity"] = serde_json::json!(1.0);
+        revised["closing"]["lines"][0]["closing_value"] = serde_json::json!(10.0);
+        revised["closing"]["lines"][0]["consumed_value"] = serde_json::json!(30.0);
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("draft-revision",2)],
+            |tx,_,_|apply_remote_closing_draft_revision(tx,&revised),
+        ).unwrap();
+        let remaining: f64 = conn.query_row(
+            "SELECT remaining_quantity FROM raw_material_month_closing_lines",[],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(remaining,1.0);
+        conn.execute(
+            "UPDATE raw_material_month_closings SET status='closed',closed_at=datetime('now')",[],
+        ).unwrap();
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("invalid-revision",3)],
+            |tx,_,_|apply_remote_closing_draft_revision(tx,&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+    }
+
+    #[test]
+    fn remote_reopen_preserves_audit_and_rejects_duplicate() {
+        let mut conn = db();
+        conn.execute(
+            "INSERT INTO raw_material_month_closings(period_month,status,closed_at)
+             VALUES('2025-01-01','closed',datetime('now'))", [],
+        ).unwrap();
+        let payload = serde_json::json!({
+            "action":"reopen","reason":"Correct stock count",
+            "closing":{"month":"2025-01-01","status":"draft"}
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-reopen",1)],
+            |tx,_,_|apply_remote_closing_reopen(tx,&payload),
+        ).unwrap();
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-01-01'",
+            [],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(status,"draft");
+        let reason: String = conn.query_row(
+            "SELECT reason FROM raw_material_closing_audit",[],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(reason,"Correct stock count");
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("reopen-again",2)],
+            |tx,_,_|apply_remote_closing_reopen(tx,&payload),
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+    }
+
+    #[test]
+    fn remote_finalization_requires_draft_and_rejects_second_close() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn,"Rice","kg").unwrap();
+        let identity: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [material.id], |r| r.get(0)
+        ).unwrap();
+        let lines = serde_json::json!([{
+            "raw_material_id":999,"opening_quantity":0.0,"opening_value":0.0,
+            "purchased_quantity":2.0,"purchased_value":20.0,
+            "remaining_quantity":1.0,"closing_value":10.0,"consumed_value":10.0
+        }]);
+        let draft = serde_json::json!({
+            "closing":{"month":"2025-01-01","status":"draft","lines":lines},
+            "material_entity_ids":[identity]
+        });
+        let final_event = serde_json::json!({
+            "closing":{"month":"2025-01-01","status":"closed","lines":lines},
+            "material_entity_ids":[identity]
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("draft-event",1)],
+            |tx,_,_|apply_remote_initial_closing(tx,&draft)
+        ).unwrap();
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("close-event",2)],
+            |tx,_,_|apply_remote_closing_finalization(tx,&final_event)
+        ).unwrap();
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-01-01'",
+            [],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(status,"closed");
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("second-close-event",3)],
+            |tx,_,_|apply_remote_closing_finalization(tx,&final_event)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),2);
+    }
+
+    #[test]
+    fn remote_initial_closing_imports_once_without_overwriting() {
+        let mut conn = db();
+        let m = raw_material_service::create_raw_material(&conn,"Beans","kg").unwrap();
+        let identity: String = conn.query_row(
+            "SELECT entity_id FROM cloud_entity_ids WHERE entity_type='raw_materials' AND local_id=?1",
+            [m.id], |r| r.get(0),
+        ).unwrap();
+        let payload = serde_json::json!({
+            "closing":{"month":"2025-01-01","status":"closed","lines":[{
+                "raw_material_id":999,"opening_quantity":0.0,"opening_value":0.0,
+                "purchased_quantity":3.0,"purchased_value":30.0,
+                "remaining_quantity":1.0,"closing_value":10.0,"consumed_value":20.0
+            }]},
+            "material_entity_ids":[identity]
+        });
+        crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("remote-closing",1)],
+            |tx,_,_|apply_remote_initial_closing(tx,&payload)
+        ).unwrap();
+        let row: (i64,String) = conn.query_row(
+            "SELECT raw_material_id,c.status FROM raw_material_month_closing_lines l
+             JOIN raw_material_month_closings c ON c.id=l.closing_id",
+            [],|r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(row,(m.id,"closed".into()));
+        assert!(crate::database::connection::apply_cloud_event_batch(
+            &mut conn,&[("duplicate-closing",2)],
+            |tx,_,_|apply_remote_initial_closing(tx,&payload)
+        ).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),1);
+    }
+
+    #[test]
     fn save_close_carry_forward_and_reopen() {
         let mut c = db();
         let meat = raw_material_service::create_raw_material(&c,"Meat","kg").unwrap();
@@ -350,6 +756,111 @@ mod tests {
         assert_eq!(close_month(&mut c,"2025-10-01").unwrap().lines[0].consumed_value,4800.0);
         let count:i64=c.query_row("SELECT COUNT(*) FROM raw_material_closing_audit",[],|r|r.get(0)).unwrap();
         assert_eq!(count,1);
+    }
+
+    #[test]
+    fn closing_events_reference_original_material_identity() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        conn.execute(
+            "UPDATE cloud_entity_ids SET entity_id='remote:material'
+             WHERE entity_type='raw_materials' AND local_id=?1", [material.id],
+        ).unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM cloud_outbox WHERE entity_type='material_month_closings' ORDER BY rowid"
+        ).unwrap();
+        let events: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap()
+            .map(|r| r.unwrap()).collect();
+        assert_eq!(events.len(), 2);
+        for payload in events {
+            let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(event["material_entity_ids"][0], "remote:material");
+        }
+    }
+
+    #[test]
+    fn closing_finalization_queues_complete_month_snapshot() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        let (identity, payload): (String, String) = conn.query_row(
+            "SELECT entity_id,payload FROM cloud_outbox WHERE entity_type='material_month_closings' ORDER BY rowid DESC LIMIT 1",
+            [], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(identity, "2025-10-01");
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["closing"]["status"], "closed");
+        assert_eq!(event["closing"]["lines"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn closing_finalization_rolls_back_if_outbox_fails() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_closing_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='material_month_closings'
+             BEGIN SELECT RAISE(FAIL, 'outbox failure'); END;"
+        ).unwrap();
+        assert!(close_month(&mut conn, "2025-10-01").is_err());
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-10-01'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(status, "draft");
+    }
+
+    #[test]
+    fn draft_and_reopen_are_recorded_in_cloud_outbox() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        reopen_month(&mut conn, "2025-10-01", "Count corrected").unwrap();
+        let payloads: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM cloud_outbox WHERE entity_type='material_month_closings' ORDER BY rowid"
+            ).unwrap();
+            let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(payloads.len(), 3);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payloads[0]).unwrap()["closing"]["status"], "draft");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&payloads[2]).unwrap()["action"], "reopen");
+    }
+
+    #[test]
+    fn draft_and_reopen_roll_back_if_outbox_fails() {
+        let mut conn = db();
+        let material = raw_material_service::create_raw_material(&conn, "Rice", "kg").unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_closing_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='material_month_closings'
+             BEGIN SELECT RAISE(FAIL, 'outbox unavailable'); END;"
+        ).unwrap();
+        assert!(save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).is_err());
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM raw_material_month_closings", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
+        conn.execute_batch("DROP TRIGGER reject_closing_event;").unwrap();
+        save_draft(&mut conn, "2025-10-01", &[(material.id, 0.0)]).unwrap();
+        close_month(&mut conn, "2025-10-01").unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_closing_event BEFORE INSERT ON cloud_outbox
+             WHEN NEW.entity_type='material_month_closings'
+             BEGIN SELECT RAISE(FAIL, 'outbox unavailable'); END;"
+        ).unwrap();
+        assert!(reopen_month(&mut conn, "2025-10-01", "Count corrected").is_err());
+        let status: String = conn.query_row(
+            "SELECT status FROM raw_material_month_closings WHERE period_month='2025-10-01'",
+            [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(status, "closed");
     }
 
     #[test]

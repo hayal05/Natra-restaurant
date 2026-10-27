@@ -1,8 +1,12 @@
+import {closeModal} from "./components/modal.js";
+import {landingFor} from "./auth/access.js";
 import * as api from "./api.js";
+import { endNativeSession } from "./auth/session.js";
+import { createSyncNowController } from "./sync/sync_now.js";
 import { registerRoutes, initRouter, navigate } from "./router.js";
 import { store, setUser, setSettings, pushToast } from "./state.js";
 import { renderNavItems, setActiveNavItem } from "./components/sidebar.js";
-import { setHeaderTitle, clearHeaderActions } from "./components/header.js";
+import { setHeaderTitle, clearHeaderActions, setHeaderSyncStatus, setHeaderSyncAllowance } from "./components/header.js";
 import { mountToastStack } from "./components/notification.js";
 
 const appRoot = document.getElementById("app");
@@ -15,9 +19,32 @@ function buildLayouts() {
   const shell = document.createElement("div"); shell.className="app-shell"; shell.style.display="none";
   shell.innerHTML = `
     <aside class="sidebar"><div class="sidebar-brand"><img src="assets/logo.svg" alt="NATRA"/><span class="sidebar-brand-natra">NATRA</span><span class="sidebar-brand-name">Cashier</span></div><nav class="sidebar-nav" id="sidebar-nav"></nav><div class="sidebar-footer"><div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem"><span id="current-user-label" style="color:var(--color-paper-ink-soft);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span><button id="logout-btn" style="color:var(--color-navy-bright);font-size:var(--text-sm);font-weight:650">Log out</button></div><div style="margin-top:.45rem;color:#6f88a3;font-size:.68rem">NATRA Management</div></div></aside>
-    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
-  appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"));
-  shell.querySelector("#logout-btn").addEventListener("click",()=>{setUser(null);navigate("/login")});
+    <div class="main"><header class="header"><div class="header-title" id="header-title"></div><div class="header-company" id="header-company"></div><div class="header-actions" id="header-actions"></div><button id="header-sync-btn" class="btn btn-primary btn-sm" type="button" disabled title="Cloud synchronization is not configured yet" aria-label="Sync now (not yet available)">↻ Sync Now</button></header><div class="content"><div class="content-inner" id="app-outlet"></div></div></div>`;
+  appRoot.append(publicScreen,shell); mountToastStack(appRoot); renderNavItems(shell.querySelector("#sidebar-nav"),store.getState().user);
+  setHeaderSyncStatus(shell, "ready", false);
+  const manualSync=createSyncNowController({bridge:api.cloudSync,
+    getUserKey:()=>store.getState().user?.id??null,
+    onState:(status,available)=>setHeaderSyncStatus(shell,status,available),
+    onAllowance:allowance=>setHeaderSyncAllowance(shell,allowance)});
+  shell.querySelector("#header-sync-btn").addEventListener("click",async()=>{
+    try {const report=await manualSync.run();if(report.ran)pushToast("Synchronization completed.","success");}
+    catch {pushToast("Synchronization did not finish. Retry when ready.","error");}
+  });
+  let syncUser=store.getState().user;
+  store.subscribe(({user})=>{if(user!==syncUser){syncUser=user;renderNavItems(shell.querySelector("#sidebar-nav"),user);manualSync.invalidate();void manualSync.refresh();}});
+  window.addEventListener("native-session-ended",()=>{
+    if(!store.getState().user)return;
+    manualSync.invalidate();closeModal();shell.querySelector("#app-outlet").replaceChildren();setUser(null);setSettings(null);navigate("/login");
+    pushToast("Your local session ended. Please sign in again.","info");
+  });
+  window.addEventListener("offline",()=>manualSync.invalidate());
+  window.addEventListener("online",()=>{void manualSync.refresh();});
+  void manualSync.refresh();
+  shell.querySelector("#logout-btn").addEventListener("click",async()=>{
+    manualSync.invalidate();
+    try {await endNativeSession({logout:api.auth.logout,clearUser:()=>{closeModal();shell.querySelector("#app-outlet").replaceChildren();setUser(null);setSettings(null);},navigate});}
+    catch {pushToast("Could not finish logging out. Please try again.","error");}
+  });
   return {publicScreen,publicOutlet,shell,appOutlet:shell.querySelector("#app-outlet")};
 }
 
@@ -44,6 +71,8 @@ function promotePageActions(appOutlet, shell) {
 }
 
 async function bootstrap(){
+  // A reloaded WebView must not inherit a previous window's native login.
+  try {await api.auth.logout();} catch {appRoot.textContent="Could not initialize the local session. Please restart the app.";return;}
   const {publicScreen,publicOutlet,shell,appOutlet}=buildLayouts();
   registerRoutes({
     "/setup":{loader:()=>import("./auth/initialization.js"),public:true,title:"Setup"},
@@ -94,5 +123,5 @@ async function bootstrap(){
   let initialized=false;try{initialized=await api.auth.isInitialized()}catch(err){pushToast(typeof err==="string"?err:"Couldn't reach the local database.","error",0)}
   if(!initialized){navigate("/setup");return} navigate("/login");
 }
-export async function completeLogin(user){setUser(user);try{setSettings(await api.settings.get())}catch(err){pushToast(typeof err==="string"?err:"Couldn't load settings.","error")}navigate("/dashboard")}
+export async function completeLogin(user){setUser(user);try{setSettings(await api.settings.get())}catch(err){pushToast(typeof err==="string"?err:"Couldn't load settings.","error")}navigate(landingFor(user))}
 bootstrap();

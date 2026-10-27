@@ -1,5 +1,4 @@
-//! Orchestrates one full sync cycle (push then pull) and the periodic
-//! background loop that drives it automatically when sync is enabled.
+//! Orchestrates a manual push-and-pull synchronization cycle.
 //!
 //! Nothing here talks to `rusqlite` types directly beyond the tiny
 //! `sync_meta` cursor read/write below — the heavy lifting is
@@ -8,10 +7,9 @@
 //!   2. connects, pushes, pulls
 //!   3. advances the cursor and reports what happened
 
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
 
 use crate::database::Db;
 use crate::errors::AppResult;
@@ -19,12 +17,28 @@ use crate::services::settings_service;
 
 use super::turso::{self, TursoClient};
 
-/// How often the background loop attempts a sync cycle while the app
-/// is open. Deliberately not configurable from the UI (yet) — this is
-/// a restaurant POS, not a chat app; a few minutes of staleness on a
-/// second device is fine, and anything faster just burns battery/data
-/// for no benefit offline-first apps care about.
-const SYNC_INTERVAL: Duration = Duration::from_secs(120);
+// Shared by all sync entry points in this desktop process.
+// A drop guard guarantees release on success, error, or cancellation.
+static SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) static SYNC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) struct SyncGuard;
+
+impl SyncGuard {
+    pub(crate) fn acquire() -> Option<Self> {
+        SYNC_RUNNING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        SYNC_RUNNING.store(false, Ordering::Release);
+    }
+}
 
 /// Outcome of one sync cycle, returned to the frontend by the
 /// `sync_now` command so a "Sync" button can show something more
@@ -47,36 +61,12 @@ impl SyncReport {
     }
 }
 
-/// Start the background loop as a fire-and-forget task on Tauri's
-/// async runtime. Called once from `lib.rs`'s `setup()`; the loop
-/// checks `settings.sync_enabled` on every tick, so enabling/disabling
-/// sync from the Settings page takes effect on the next tick without
-/// needing to restart the loop itself.
-pub fn start_background(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(SYNC_INTERVAL);
-        loop {
-            interval.tick().await;
-            let db = app.state::<Db>();
-            match run_once(&db).await {
-                Ok(report) if report.ran => {
-                    if let Some(err) = &report.error {
-                        eprintln!("[sync] cycle failed: {err}");
-                    } else {
-                        eprintln!("[sync] pushed {} pulled {}", report.pushed, report.pulled);
-                    }
-                }
-                Ok(_) => {} // sync disabled — nothing to log every two minutes
-                Err(e) => eprintln!("[sync] could not read settings: {e}"),
-            }
-        }
-    });
-}
-
-/// Run exactly one push+pull cycle right now. Used by both the
-/// background loop and the manual `sync_now` command — a manual sync
-/// is just this function called out of band.
+/// Run a single push-and-pull cycle only when explicitly requested.
+/// Concurrent attempts are rejected by SyncGuard.
 pub async fn run_once(db: &Db) -> AppResult<SyncReport> {
+    let _guard = SyncGuard::acquire().ok_or_else(|| {
+        crate::errors::AppError::Sync("synchronization already in progress".into())
+    })?;
     let settings = {
         let conn = db.lock();
         settings_service::get_settings(&conn)?
@@ -148,6 +138,15 @@ mod tests {
     }
 
     #[test]
+    fn sync_guard_blocks_overlap_and_releases_on_drop() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
+        let first = SyncGuard::acquire().expect("first sync can begin");
+        assert!(SyncGuard::acquire().is_none(), "overlapping sync is rejected");
+        drop(first);
+        assert!(SyncGuard::acquire().is_some(), "lock is released on completion");
+    }
+
+    #[test]
     fn cursor_defaults_to_epoch_before_first_sync() {
         let db = db();
         assert_eq!(read_cursor(&db).unwrap(), "1970-01-01 00:00:00");
@@ -162,6 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_is_a_no_op_when_sync_disabled() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
         let db = db();
         let report = run_once(&db).await.unwrap();
         assert!(!report.ran);
@@ -170,6 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_reports_missing_credentials_when_enabled_without_them() {
+        let _serial = SYNC_TEST_LOCK.lock().unwrap();
         let db = db();
         {
             let conn = db.lock();

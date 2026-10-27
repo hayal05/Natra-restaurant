@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 import * as api from "../api.js";
 import { store, pushToast, withErrorToast } from "../state.js";
 import { renderTable } from "../components/table.js";
@@ -147,7 +148,7 @@ function openItemModal(els, categories, selectedCategoryId = null) {
 
 function openPricingModal(els, item, categories = []) {
   const cookable = item.type === "cookable"; const form = document.createElement("form"); form.noValidate = true;
-  form.innerHTML = `<p style="font-size:var(--text-sm);color:var(--color-ink-soft);margin-bottom:var(--space-4);">${escapeHtml(item.name)} — pricing only.</p><div class="field"><label class="field-label" for="edit-price">Selling price</label><input class="input input-mono" id="edit-price" type="number" step="0.01" min="0" value="${item.selling_price}" /><span class="field-error" id="edit-price-error"></span></div>${cookable ? "" : `<div class="field"><label class="field-label" for="edit-cost">Purchase cost</label><input class="input input-mono" id="edit-cost" type="number" step="0.01" min="0" value="${item.purchase_cost ?? ""}" /><span class="field-error" id="edit-cost-error"></span></div>`}`;
+  form.innerHTML = `<p style="font-size:var(--text-sm);color:var(--color-ink-soft);margin-bottom:var(--space-4);">${escapeHtml(item.name)} — pricing only.</p><div class="field"><label class="field-label" for="edit-price">Selling price</label><input class="input input-mono" id="edit-price" type="number" step="0.01" min="0" value="${escapeHtml(item.selling_price)}" /><span class="field-error" id="edit-price-error"></span></div>${cookable ? "" : `<div class="field"><label class="field-label" for="edit-cost">Purchase cost</label><input class="input input-mono" id="edit-cost" type="number" step="0.01" min="0" value="${escapeHtml(item.purchase_cost ?? "")}" /><span class="field-error" id="edit-cost-error"></span></div>`}`;
   const cancel = document.createElement("button"); cancel.className = "btn btn-secondary"; cancel.type = "button"; cancel.textContent = "Cancel"; cancel.addEventListener("click", closeModal);
   const save = document.createElement("button"); save.className = "btn btn-primary"; save.type = "button"; save.textContent = "Save"; save.addEventListener("click", () => form.requestSubmit());
   openModal({ title: "Edit pricing", content: form, actions: [cancel, save] });
@@ -156,4 +157,3 @@ function openPricingModal(els, item, categories = []) {
 
 function showFieldError(form, fieldId, message) { const input = form.querySelector(`#${fieldId}`); const errorEl = form.querySelector(`#${fieldId}-error`); if (input) input.classList.add("has-error"); if (errorEl) errorEl.textContent = message; }
 function clearFormErrors(form) { form.querySelectorAll(".input,.select").forEach((el) => el.classList.remove("has-error")); form.querySelectorAll(".field-error").forEach((el) => (el.textContent = "")); }
-function escapeHtml(text) { const div = document.createElement("div"); div.textContent = text ?? ""; return div.innerHTML; }

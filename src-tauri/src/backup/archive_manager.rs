@@ -68,6 +68,10 @@ fn verify_xlsx(bytes: &[u8]) -> AppResult<()> {
 }
 
 pub fn export_range(db: &Db, directory: &Path, from: &str, through: &str) -> AppResult<ArchiveResult> {
+    export_range_with_connection(&db.lock(), directory, from, through)
+}
+
+pub(crate) fn export_range_with_connection(conn: &rusqlite::Connection, directory: &Path, from: &str, through: &str) -> AppResult<ArchiveResult> {
     let (start, end) = eat_window(from, through)?;
     fs::create_dir_all(directory).map_err(|e| AppError::Internal(e.to_string()))?;
     let batch_id = format!("EAT-{}-{}", from.replace('-', ""), through.replace('-', ""));
@@ -77,10 +81,7 @@ pub fn export_range(db: &Db, directory: &Path, from: &str, through: &str) -> App
         verify_xlsx(&fs::read(&final_path).map_err(|e| AppError::Internal(e.to_string()))?)?;
         return Ok(ArchiveResult { batch_id, path: final_path.to_string_lossy().into_owned(), already_exists: true });
     }
-    let bytes = {
-        let conn = db.lock();
-        build_sales_archive(&conn, &batch_id, &start, &end)?
-    };
+    let bytes = build_sales_archive(conn, &batch_id, &start, &end)?;
     verify_xlsx(&bytes)?;
 
     let seq = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);

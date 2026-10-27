@@ -1,3 +1,4 @@
+import { escapeHtml } from "../utils/html.js";
 /**
  * Settings: restaurant name/currency, and optional Turso sync. Sync
  * credentials are write-only from the frontend's perspective — the
@@ -233,13 +234,13 @@ function paintBackupSection(badge, section, status) {
     ? `Last backup: ${formatDateTime(status.last_backup_at)}`
     : "No backup has run yet.";
   const lastError = status.last_backup_error
-    ? `<p class="field-error" style="margin-top: var(--space-2);">Last attempt failed: ${status.last_backup_error}</p>`
+    ? `<p class="field-error" style="margin-top: var(--space-2);">Last attempt failed: ${escapeHtml(status.last_backup_error)}</p>`
     : "";
 
   section.innerHTML = `
-    <p style="font-size: var(--text-sm); margin-bottom: var(--space-1);">${lastRun}</p>
+    <p style="font-size: var(--text-sm); margin-bottom: var(--space-1);">${escapeHtml(lastRun)}</p>
     <p style="font-size: var(--text-xs); color: var(--color-ink-soft); margin-bottom: var(--space-4);">
-      Saved to: <span class="input-mono">${status.backup_dir}</span>
+      Saved to: <span class="input-mono">${escapeHtml(status.backup_dir)}</span>
     </p>
     ${lastError}
     <div class="form-actions" style="gap: var(--space-2);">

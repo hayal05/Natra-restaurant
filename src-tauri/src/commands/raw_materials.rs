@@ -3,19 +3,22 @@
 use tauri::State;
 
 use crate::database::Db;
+use crate::sync::cloud_bridge::{CloudBridge, BusinessPermission};
 use crate::errors::AppResult;
 use crate::models::{RawMaterial, RawMaterialPurchase};
 use crate::services::raw_material_service;
 
 #[tauri::command]
-pub fn create_raw_material(db: State<Db>, name: String, unit: String) -> AppResult<RawMaterial> {
+pub fn create_raw_material(db: State<Db>, bridge: State<CloudBridge>, name: String, unit: String) -> AppResult<RawMaterial> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     raw_material_service::create_raw_material(&conn, &name, &unit)
 }
 
 #[tauri::command]
-pub fn list_raw_materials(db: State<Db>, only_active: bool) -> AppResult<Vec<RawMaterial>> {
+pub fn list_raw_materials(db: State<Db>, bridge: State<CloudBridge>, only_active: bool) -> AppResult<Vec<RawMaterial>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     raw_material_service::list_raw_materials(&conn, only_active)
 }
 
@@ -23,7 +26,7 @@ pub fn list_raw_materials(db: State<Db>, only_active: bool) -> AppResult<Vec<Raw
 /// quantity * unit_cost — never trusted from the frontend.
 #[tauri::command]
 pub fn record_purchase(
-    db: State<Db>,
+    db: State<Db>, bridge: State<CloudBridge>,
     raw_material_id: i64,
     quantity: f64,
     unit_cost: f64,
@@ -31,6 +34,7 @@ pub fn record_purchase(
     note: Option<String>,
 ) -> AppResult<RawMaterialPurchase> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     raw_material_service::record_purchase(
         &conn,
         raw_material_id,
@@ -43,10 +47,11 @@ pub fn record_purchase(
 
 #[tauri::command]
 pub fn list_purchases(
-    db: State<Db>,
+    db: State<Db>, bridge: State<CloudBridge>,
     raw_material_id: Option<i64>,
 ) -> AppResult<Vec<RawMaterialPurchase>> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     raw_material_service::list_purchases(&conn, raw_material_id)
 }
 
@@ -54,10 +59,11 @@ pub fn list_purchases(
 /// (inclusive, 'YYYY-MM-DD' or full datetime strings).
 #[tauri::command]
 pub fn raw_material_total_cost(
-    db: State<Db>,
+    db: State<Db>, bridge: State<CloudBridge>,
     from: Option<String>,
     to: Option<String>,
 ) -> AppResult<f64> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     raw_material_service::total_cost(&conn, from.as_deref(), to.as_deref())
 }

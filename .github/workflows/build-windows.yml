@@ -9,6 +9,7 @@ on:
       - "src-tauri/**"
       - "public/**"
       - "migrations/**"
+      - "cloud/**"
       - "package.json"
       - ".github/workflows/build-windows.yml"
   pull_request:
@@ -18,6 +19,7 @@ on:
       - "src-tauri/**"
       - "public/**"
       - "migrations/**"
+      - "cloud/**"
       - "package.json"
   workflow_dispatch:
 
@@ -49,9 +51,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Test serverless API security and health
+        run: node --test cloud/tests/health.test.js cloud/tests/sync.test.js cloud/tests/enrollment.test.js cloud/tests/issuance.test.js cloud/tests/upload.test.js cloud/tests/pull.test.js cloud/tests/sync_now.test.js cloud/tests/allowance.test.js cloud/tests/recovery.test.js cloud/tests/privileges.test.js cloud/tests/native_session.test.js cloud/tests/broker.test.js cloud/tests/webview_security.test.js cloud/tests/business_authorization.test.js cloud/tests/provisioning_acceptance.test.js
+
+      - name: Test WebView policy and injection in Edge
+        run: node --test cloud/tests/webview.browser.test.js
+
       - name: Run Rust tests
         working-directory: src-tauri
         run: cargo test
+
+      - name: Build trusted OS provisioning utility
+        working-directory: src-tauri
+        run: cargo build --release --bin natra-sync-provision
 
       - name: Build Tauri app (MSI + NSIS)
         run: npm run build
@@ -61,6 +73,7 @@ jobs:
         with:
           name: natra-windows-${{ github.sha }}
           path: |
+            src-tauri/target/release/natra-sync-provision.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error

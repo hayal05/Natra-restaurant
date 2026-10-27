@@ -127,17 +127,19 @@ pub fn force_now(app: &AppHandle, db: &Db) -> AppResult<BackupReport> {
 /// Core logic, independent of Tauri — takes a plain directory so it's
 /// easy to unit test with a tempdir.
 fn run_once(db: &Db, backup_dir: &Path, force: bool) -> AppResult<BackupReport> {
-    let settings = {
-        let conn = db.lock();
-        settings_service::get_settings(&conn)?
-    };
+    run_once_with_connection(&db.lock(), backup_dir, force)
+}
+
+/// Reuses the IPC caller's already locked connection; no recursive DB lock.
+pub(crate) fn run_once_with_connection(conn: &rusqlite::Connection, backup_dir: &Path, force: bool) -> AppResult<BackupReport> {
+    let settings = settings_service::get_settings(conn)?;
 
     if !settings.backup_enabled {
         return Ok(BackupReport::disabled());
     }
 
     if !force {
-        let last = read_meta(db, "last_backup_at")?;
+        let last = read_meta_conn(conn, "last_backup_at")?;
         if let Some(last_at) = last {
             if let Ok(parsed) = NaiveDateTime::parse_from_str(&last_at, SQLITE_DATETIME_FMT) {
                 let elapsed = Utc::now().naive_utc() - parsed;
@@ -148,25 +150,22 @@ fn run_once(db: &Db, backup_dir: &Path, force: bool) -> AppResult<BackupReport> 
         }
     }
 
-    match write_backup(db, backup_dir) {
+    match write_backup(conn, backup_dir) {
         Ok((path, pruned)) => {
-            write_meta(db, "last_backup_at", Some(&now_str()))?;
-            write_meta(db, "last_backup_path", Some(&path))?;
-            write_meta(db, "last_backup_error", None)?;
+            write_meta_conn(conn, "last_backup_at", Some(&now_str()))?;
+            write_meta_conn(conn, "last_backup_path", Some(&path))?;
+            write_meta_conn(conn, "last_backup_error", None)?;
             Ok(BackupReport { ran: true, path: Some(path), pruned, error: None })
         }
         Err(e) => {
-            write_meta(db, "last_backup_error", Some(&e.to_string()))?;
+            write_meta_conn(conn, "last_backup_error", Some(&e.to_string()))?;
             Ok(BackupReport::failed(&e))
         }
     }
 }
 
-fn write_backup(db: &Db, backup_dir: &Path) -> AppResult<(String, usize)> {
-    let bytes = {
-        let conn = db.lock();
-        export::build_workbook(&conn)?
-    };
+fn write_backup(conn: &rusqlite::Connection, backup_dir: &Path) -> AppResult<(String, usize)> {
+    let bytes = export::build_workbook(conn)?;
 
     let filename = format!("natra-backup-{}.xlsx", Utc::now().format("%Y-%m-%d_%H%M%S"));
     let path = backup_dir.join(&filename);
@@ -206,13 +205,10 @@ fn now_str() -> String {
     Utc::now().format(SQLITE_DATETIME_FMT).to_string()
 }
 
-fn read_meta(db: &Db, key: &str) -> AppResult<Option<String>> {
-    let conn = db.lock();
+fn read_meta_conn(conn: &rusqlite::Connection, key: &str) -> AppResult<Option<String>> {
     Ok(conn.query_row("SELECT value FROM backup_meta WHERE key = ?1", [key], |row| row.get(0))?)
 }
-
-fn write_meta(db: &Db, key: &str, value: Option<&str>) -> AppResult<()> {
-    let conn = db.lock();
+fn write_meta_conn(conn: &rusqlite::Connection, key: &str, value: Option<&str>) -> AppResult<()> {
     conn.execute(
         "UPDATE backup_meta SET value = ?1 WHERE key = ?2",
         rusqlite::params![value, key],
@@ -223,18 +219,17 @@ fn write_meta(db: &Db, key: &str, value: Option<&str>) -> AppResult<()> {
 /// Full status for the Settings page: is it on, where do files go,
 /// and what happened last time.
 pub fn status(app: &AppHandle, db: &Db) -> AppResult<BackupStatus> {
-    let settings = {
-        let conn = db.lock();
-        settings_service::get_settings(&conn)?
-    };
+    status_with_connection(app, &db.lock())
+}
+pub(crate) fn status_with_connection(app: &AppHandle, conn: &rusqlite::Connection) -> AppResult<BackupStatus> {
+    let settings = settings_service::get_settings(conn)?;
     let dir = backup_dir_for_app(app)?;
-
     Ok(BackupStatus {
         enabled: settings.backup_enabled,
         backup_dir: dir.to_string_lossy().into_owned(),
-        last_backup_at: read_meta(db, "last_backup_at")?,
-        last_backup_path: read_meta(db, "last_backup_path")?,
-        last_backup_error: read_meta(db, "last_backup_error")?,
+        last_backup_at: read_meta_conn(conn, "last_backup_at")?,
+        last_backup_path: read_meta_conn(conn, "last_backup_path")?,
+        last_backup_error: read_meta_conn(conn, "last_backup_error")?,
     })
 }
 

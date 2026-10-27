@@ -9,6 +9,7 @@ use tauri::{AppHandle, State};
 
 use crate::backup;
 use crate::database::Db;
+use crate::sync::cloud_bridge::{CloudBridge, BusinessPermission};
 use crate::errors::AppResult;
 use crate::models::Settings;
 use crate::services::settings_service;
@@ -16,8 +17,10 @@ use crate::services::settings_service;
 /// Current backup configuration and last-run state, for the Settings
 /// page (enabled?, where do files go, when did it last run/fail).
 #[tauri::command]
-pub fn backup_status(app: AppHandle, db: State<Db>) -> AppResult<backup::BackupStatus> {
-    backup::manager::status(&app, db.inner())
+pub fn backup_status(app: AppHandle, db: State<Db>, bridge: State<CloudBridge>) -> AppResult<backup::BackupStatus> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
+    backup::manager::status_with_connection(&app, &conn)
 }
 
 /// Powers a "Backup now" button. Ignores the daily cadence — pressing
@@ -25,21 +28,26 @@ pub fn backup_status(app: AppHandle, db: State<Db>) -> AppResult<backup::BackupS
 /// same way a manual "Sync now" always runs regardless of the
 /// background loop's timer.
 #[tauri::command]
-pub fn backup_now(app: AppHandle, db: State<Db>) -> AppResult<backup::BackupReport> {
-    backup::force_now(&app, db.inner())
+pub fn backup_now(app: AppHandle, db: State<Db>, bridge: State<CloudBridge>) -> AppResult<backup::BackupReport> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
+    backup::manager::run_once_with_connection(&conn, &backup::manager::backup_dir_for_app(&app)?, true)
 }
 
 #[tauri::command]
-pub fn set_backup_enabled(db: State<Db>, enabled: bool) -> AppResult<Settings> {
+pub fn set_backup_enabled(db: State<Db>, bridge: State<CloudBridge>, enabled: bool) -> AppResult<Settings> {
     let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     settings_service::set_backup_enabled(&conn, enabled)
 }
 
 /// Offline manual range export; business dates interpreted in EAT.
 #[tauri::command]
-pub fn export_transaction_archive(app: AppHandle, db: State<Db>, from: String, through: String) -> AppResult<backup::archive_manager::ArchiveResult> {
+pub fn export_transaction_archive(app: AppHandle, db: State<Db>, bridge: State<CloudBridge>, from: String, through: String) -> AppResult<backup::archive_manager::ArchiveResult> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     let dir = backup::archive_manager::archive_dir(&app)?;
-    backup::archive_manager::export_range(db.inner(), &dir, &from, &through)
+    backup::archive_manager::export_range_with_connection(&conn, &dir, &from, &through)
 }
 
 #[derive(serde::Serialize)]
@@ -50,7 +58,9 @@ pub struct ArchiveListing {
 }
 
 #[tauri::command]
-pub fn list_transaction_archives(app: AppHandle) -> AppResult<ArchiveListing> {
+pub fn list_transaction_archives(app: AppHandle, db: State<Db>, bridge: State<CloudBridge>) -> AppResult<ArchiveListing> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     let dir = backup::archive_manager::archive_dir(&app)?;
     let entries = backup::archive_manager::list_archives(&dir)?;
     Ok(ArchiveListing {
@@ -62,9 +72,11 @@ pub fn list_transaction_archives(app: AppHandle) -> AppResult<ArchiveListing> {
 
 #[tauri::command]
 pub fn download_transaction_archive(
-    app: AppHandle,
+    app: AppHandle, db: State<Db>, bridge: State<CloudBridge>,
     filename: String,
 ) -> AppResult<backup::archive_manager::DownloadedArchive> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     use tauri::Manager;
     let archives = backup::archive_manager::archive_dir(&app)?;
     let downloads = app.path().download_dir()
@@ -73,7 +85,9 @@ pub fn download_transaction_archive(
 }
 
 #[tauri::command]
-pub fn download_transaction_archive_pdf(app: AppHandle, filename: String) -> AppResult<String> {
+pub fn download_transaction_archive_pdf(app: AppHandle, db: State<Db>, bridge: State<CloudBridge>, filename: String) -> AppResult<String> {
+    let conn = db.lock();
+    let _authorization = bridge.authorize_business(&conn, BusinessPermission::Administrator)?;
     use tauri::Manager;
     let archives = backup::archive_manager::archive_dir(&app)?;
     let downloads = app.path().download_dir()

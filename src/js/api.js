@@ -1,12 +1,23 @@
-function invoke(cmd, args) {
-  if (!window.__TAURI__) return Promise.reject("Tauri bridge is not available in this context.");
-  return window.__TAURI__.core.invoke(cmd, args);
+import {store} from "./state.js";
+async function invoke(cmd, args) {
+  if (!window.__TAURI__) throw "Tauri bridge is not available in this context.";
+  const userAtRequest=store.getState().user;
+  try {return await window.__TAURI__.core.invoke(cmd, args);}
+  catch(error) {
+    // A delayed failure from an old login must not clear a newer login.
+    if(userAtRequest && store.getState().user===userAtRequest &&
+      String(error).startsWith("authentication error: your local session has ended;")) {
+      window.dispatchEvent(new Event("native-session-ended"));
+    }
+    throw error;
+  }
 }
 
 export const auth = {
   isInitialized: () => invoke("is_initialized"),
   initializeAdmin: (username, password, fullName) => invoke("initialize_admin", { username, password, fullName }),
   login: (username, password) => invoke("login", { username, password }),
+  logout: () => invoke("logout"),
 };
 
 export const waiters = {
@@ -83,4 +94,16 @@ export const archives = {
   download: (filename) => invoke("download_transaction_archive", { filename }),
   downloadPdf: (filename) => invoke("download_transaction_archive_pdf", { filename }),
   export: (from, through) => invoke("export_transaction_archive", { from, through }),
+};
+
+// Manual Neon callbacks; backend release gate remains closed.
+export const cloudSync = {
+  configuration: () => invoke("cloud_sync_configuration"),
+  credentials: (exchangeId) => invoke("cloud_sync_credentials", {exchangeId}),
+  begin: () => invoke("cloud_sync_begin"),
+  readPending: (exchangeId) => invoke("cloud_sync_pending", {exchangeId}),
+  acknowledge: (exchangeId,eventIds) => invoke("cloud_sync_acknowledge", {exchangeId,eventIds}),
+  readCursor: (exchangeId) => invoke("cloud_sync_cursor", {exchangeId}),
+  applyPage: (exchangeId,after,events) => invoke("cloud_sync_apply", {exchangeId,after,events}),
+  end: (exchangeId) => invoke("cloud_sync_end", {exchangeId}),
 };

@@ -13,6 +13,7 @@ pub mod errors;
 pub mod models;
 pub mod services;
 pub mod sync;
+mod webview_security;
 
 use database::Db;
 use tauri::Manager;
@@ -34,14 +35,17 @@ pub fn run() {
             let db = Db::init(&db_path).expect("failed to initialize local database");
 
             app.manage(db);
+            app.manage(sync::cloud_bridge::CloudBridge::default());
 
-            // Sync is a no-op every tick until Settings > sync_enabled
-            // is turned on (see sync::manager::run_once), so it's safe
-            // to always start the loop rather than gating it here.
-            sync::start_background(app.handle().clone());
+            let main_config=app.config().app.windows.iter().find(|w|w.label=="main")
+                .ok_or_else(||std::io::Error::other("main window configuration missing"))?;
+            tauri::WebviewWindowBuilder::from_config(&*app,main_config)?
+                .on_navigation(webview_security::allow_main_navigation)
+                .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny)
+                .build()?;
 
-            // Same pattern: a no-op every tick until Settings >
-            // backup_enabled is turned on (it's on by default).
+            // Cloud sync is manual-only. Do not start a background sync loop.
+            // Scheduled local backups remain independent of synchronization.
             backup::start_background(app.handle().clone());
             backup::archive_manager::start_daily(app.handle().clone());
 
@@ -51,6 +55,7 @@ pub fn run() {
             commands::auth::is_initialized,
             commands::auth::initialize_admin,
             commands::auth::login,
+            commands::auth::logout,
             commands::waiters::create_waiter,
             commands::waiters::list_waiters,
             commands::waiters::set_waiter_active,
@@ -85,7 +90,16 @@ pub fn run() {
             commands::reports::sales_mix,
             commands::reports::cash_flow_by_year,
             commands::dashboard::dashboard_summary,
+            commands::cloud_sync::cloud_sync_configuration,
+            commands::cloud_sync::cloud_sync_credentials,
+            commands::cloud_sync::cloud_sync_begin,
+            commands::cloud_sync::cloud_sync_pending,
+            commands::cloud_sync::cloud_sync_acknowledge,
+            commands::cloud_sync::cloud_sync_cursor,
+            commands::cloud_sync::cloud_sync_apply,
+            commands::cloud_sync::cloud_sync_end,
             commands::settings::get_settings,
+            commands::settings::get_installation_id,
             commands::settings::update_general_settings,
             commands::settings::enable_sync,
             commands::settings::disable_sync,
