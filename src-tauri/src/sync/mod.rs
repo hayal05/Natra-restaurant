@@ -25,3 +25,6 @@ pub use manager::{run_once, SyncReport};
 
 #[cfg(test)]
 mod multi_device_tests;
+
+// Public only for the separate trusted OS provisioning utility; no IPC setter.
+pub mod native_credentials;

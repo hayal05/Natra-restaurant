@@ -58,6 +58,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: Build trusted OS provisioning utility
+        working-directory: src-tauri
+        run: cargo build --release --bin natra-sync-provision
+
       - name: Build Tauri app (MSI + NSIS)
         run: npm run build
 
@@ -66,6 +70,7 @@ jobs:
         with:
           name: natra-windows-${{ github.sha }}
           path: |
+            src-tauri/target/release/natra-sync-provision.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error

@@ -151,3 +151,28 @@ test("a provisioned token for another installation never touches network or data
   await assert.rejects(()=>h.controller.run());assert.deepEqual(h.log,["begin","end"]);
   assert.equal(h.getPending().length,2);assert.equal(h.getCursor(),"0");
 });
+
+
+test("broker availability refresh never requests credentials and each explicit exchange delivers after begin",async()=>{
+  const h=harness();const {token,...metadata}=cfg;
+  h.bridge.configuration=async()=>({...metadata,broker:true});
+  h.bridge.credentials=async id=>{assert.equal(id,"lease");h.log.push("credentials");return {...cfg,broker:true};};
+  await h.controller.refresh();assert.deepEqual(h.log,[]);
+  await h.controller.run();
+  assert.deepEqual(h.log.slice(0,3),["begin","credentials","/sync/allowance"]);
+  assert.equal(h.getPending().length,0);
+});
+test("broker delivery failure, changed origin or logout cannot transfer business data",async()=>{
+  for(const failure of ["reject","origin","logout"]){
+    const h=harness();const {token,...metadata}=cfg;
+    h.bridge.configuration=async()=>({...metadata,broker:true});
+    h.bridge.credentials=async()=>{
+      if(failure==="reject")throw new Error("native credentials unavailable");
+      if(failure==="logout"){h.setOwner(null);h.controller.invalidate();return cfg;}
+      return {...cfg,uploadEndpoint:"https://unapproved.example.test/sync/upload"};
+    };
+    await assert.rejects(()=>h.controller.run());
+    assert.equal(h.getPending().length,2);assert.equal(h.getCursor(),"0");
+    assert.deepEqual(h.log,["begin","end"]);
+  }
+});

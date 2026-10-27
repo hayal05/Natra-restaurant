@@ -42,13 +42,12 @@ switch or IPC credential setter. Configuration returns None and IPC writes
 reject while this gate is false. Changing it requires explicit approval and
 an approved build/configuration review.
 
-For a future approved host provisioner, the configuration adapter reads
-`NATRA_NEON_SYNC_ORIGIN` and `NATRA_NEON_SESSION_TOKEN` from the process environment.
-The latter must be a short-lived session token issued for this installation.
-No tokens are saved to localStorage, settings, config files or the repository.
-The environment is a provisioning adapter, not an identity provider or renewal
-service; production user/role binding and fresh-session delivery remain setup
-and security-review work. No environment values were set by this change.
+Native credential delivery now uses the closed-gate Windows Credential Manager
+and broker transport implementation described in
+[Native delivery](NATIVE_CREDENTIAL_DELIVERY.md). The previous process-environment
+token adapter has been removed. Approved operator provisioning and physical
+staging acceptance remain pending. No plaintext credential setter or token
+storage is exposed through the frontend.
 
 Worker flags `SYNC_UPLOAD_ENABLED`, `SYNC_PULL_ENABLED` and
 `SYNC_SESSION_CONTROL_ENABLED` must each be the exact string `true` in an

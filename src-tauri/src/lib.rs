@@ -83,6 +83,7 @@ pub fn run() {
             commands::reports::cash_flow_by_year,
             commands::dashboard::dashboard_summary,
             commands::cloud_sync::cloud_sync_configuration,
+            commands::cloud_sync::cloud_sync_credentials,
             commands::cloud_sync::cloud_sync_begin,
             commands::cloud_sync::cloud_sync_pending,
             commands::cloud_sync::cloud_sync_acknowledge,

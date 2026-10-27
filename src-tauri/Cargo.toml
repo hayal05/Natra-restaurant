@@ -17,6 +17,9 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+base64 = "=0.22.1"
+url = "=2.5.8"
+
 # Local database
 rusqlite = { version = "0.31", features = ["bundled"] }
 
@@ -51,6 +54,9 @@ libsql = { version = "0.9", default-features = false, features = ["remote"] }
 # only). Pin to 1.7.0 for broader toolchain compatibility; bump this
 # once your build environment is on a current stable Rust.
 zeroize = "=1.7.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Networking_WinHttp"] }
 
 [profile.release]
 panic = "abort"

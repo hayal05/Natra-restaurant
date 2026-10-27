@@ -45,17 +45,27 @@ See [Native authorization](cloud/NATIVE_SYNC_AUTHORIZATION.md).
 This step passed Windows CI `40378138213` at `1aacfd3`: 109 Node tests,
 171 Rust tests and MSI/NSIS builds. Live synchronization remains disabled.
 
-## Current step — token broker (2A)
+## Completed source step — token broker (2A)
 
 The server half of secure token delivery adds a separately disabled broker,
 digest-only provisioned credentials, approved native-user/cloud-subject mapping,
 fresh scoped session issuance and credential revocation. SQL 016 is unapplied.
-See [Credential broker](cloud/CREDENTIAL_BROKER.md). The next step (2B) is native
-OS credential storage, secure provisioning and bounded broker transport; the
-desktop has not been connected to this broker and still cannot start live sync.
+See [Credential broker](cloud/CREDENTIAL_BROKER.md). Step 2A passed Windows CI `40456734254` at `e4e4926`: 122 Node tests,
+171 Rust tests and MSI/NSIS builds. The broker remains disabled.
 
-The expanded Node suite passes 122 tests locally. The broker source commit
-requires Windows CI before advancing to native delivery (2B).
+## Current source step — native credential delivery (2B)
+
+Windows Credential Manager storage, a separate stdin provisioning utility and
+bounded native WinHTTP broker transport are implemented behind the closed gate.
+Delivery is bound to the native login generation and exact lease; logout or
+account/context changes prevent returned tokens from reaching the coordinator.
+Refresh remains local-only. No plaintext/environment token fallback remains.
+See [Native delivery](cloud/NATIVE_CREDENTIAL_DELIVERY.md). Windows CI must
+verify this source commit before the next blocker is started.
+
+The remaining work includes staging provisioning/role/issuer/TLS acceptance,
+remote revocation policy, WebView/CSP/IPC hardening, financial-conflict recovery,
+and operational/concurrency acceptance. Neither live gate was opened.
 
 ## Verification
 
@@ -79,8 +89,9 @@ introduced.
 
 - `LIVE_NEON_SYNC_ENABLED` remains false; new native writes reject and
   configuration returns None. All four Worker enablement flags remain absent.
-- Native administrator/lease binding is implemented in source; secure fresh-token
-  delivery/renewal, approved server-subject binding and remote revocation remain pending.
+- Native administrator/lease binding, broker mappings and OS token delivery
+  are implemented in source; actual provisioning, issuer/role/TLS acceptance and
+  remote revocation policy remain pending.
 - WebView/CSP/IPC review, financial-conflict resolution, rejected-event repair,
   least-privilege grants and operational/concurrency evidence are pending.
 - No cloud migrations, live credentials, signing keys or services were applied.

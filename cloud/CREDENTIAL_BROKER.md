@@ -1,9 +1,9 @@
 # Token delivery step 2A — Trusted credential broker source
 
 Updated 27 October 2026. This is the server half of token delivery/renewal.
-Native Windows credential storage and broker transport are the next separate
-step. The desktop still uses its closed staging adapter; it does not contact
-this broker. Nothing was deployed, provisioned, merged or activated.
+Native Windows storage and transport now have a separate closed-gate source
+implementation: [Native delivery](NATIVE_CREDENTIAL_DELIVERY.md). The desktop
+does not contact this broker while the release gate is closed. Nothing was deployed, provisioned, merged or activated.
 
 ## Trust and enrollment
 
@@ -27,7 +27,8 @@ credential, prefixed `natra_sync_`, and sends only its SHA-256 digest to Postgre
 Successful stdout contains the raw secret once and must be handled as a secret;
 it must never enter chat, logs, command arguments, source or frontend storage.
 Do not run issuer administration or distribute database credentials/signing
-keys on a customer desktop. Native secure provisioning is not implemented here.
+keys on a customer desktop. The separate native utility supplies the OS storage path; actual approved
+operator delivery and staging provisioning remain pending.
 
 The registered credential expires after 30 days. One non-revoked credential per
 installation/native user is allowed. Creation never silently replaces an
@@ -137,3 +138,7 @@ revocation, explicit rotation, unrelated-session preservation, quota, PUBLIC
 denial, ambiguous-response cleanup, strict request boundaries, closed gates,
 mandatory throttling and ordinary sync-Worker isolation. These are source
 regressions, not real multi-connection or live-issuer acceptance evidence.
+
+Step 2B implements the native storage/transport requirements above in source,
+behind the unchanged closed gate. This document remains the broker-side protocol;
+see the native delivery document for current behavior and remaining acceptance.

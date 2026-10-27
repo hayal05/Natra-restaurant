@@ -66,11 +66,12 @@ protect against an attacker who can alter the local database or desktop process.
 
 The disabled server-side [credential broker](CREDENTIAL_BROKER.md) now provides
 a source path for fresh issuance and mapped-session revocation.
-Native secure fresh-token delivery/renewal is still pending. The process-environment
-adapter is not a production credential broker; binding an approved server
-subject/workspace entitlement to the verified native user, reissuing sessions,
-secure storage/rotation and remote revocation need separate implementation and
-acceptance evidence. Local logout prevents further native use; it does not
+Native secure fresh-token delivery now has a separate closed-gate
+[source implementation](NATIVE_CREDENTIAL_DELIVERY.md); actual provisioning
+and physical acceptance remain pending. The environment-token adapter has been removed. Approved broker mappings
+and native OS storage/transport now exist in source; actual operator delivery,
+rotation, issuer/role configuration and remote revocation acceptance remain
+separate work. Local logout prevents further native use; it does not
 revoke an already issued server bearer token. Server signatures and current
 workspace/device/session checks remain authoritative for cloud requests.
 

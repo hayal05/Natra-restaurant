@@ -89,6 +89,7 @@ export const archives = {
 // Manual Neon callbacks; backend release gate remains closed.
 export const cloudSync = {
   configuration: () => invoke("cloud_sync_configuration"),
+  credentials: (exchangeId) => invoke("cloud_sync_credentials", {exchangeId}),
   begin: () => invoke("cloud_sync_begin"),
   readPending: (exchangeId) => invoke("cloud_sync_pending", {exchangeId}),
   acknowledge: (exchangeId,eventIds) => invoke("cloud_sync_acknowledge", {exchangeId,eventIds}),

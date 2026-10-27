@@ -37,7 +37,7 @@ PGlite and generated test keys. None contact live Neon. See
 | Gate | Required evidence before live release | Current state |
 | --- | --- | --- |
 | Native authorization | Backend user/role-bound lease; logout/revocation tests | Administrator-owned native session and callback checks added in source; live WebView acceptance pending |
-| Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Disabled broker source and grant/revocation SQL added; native OS delivery and staging acceptance pending |
+| Provisioning | Approved signer/JWKS; secure fresh-session delivery and renewal; key rotation | Disabled broker and native OS delivery source added; actual provisioning and staging acceptance pending |
 | WebView | CSP, stored-text injection, navigation and IPC least-privilege review on Windows | Review/remediation pending |
 | Financial conflicts | Reviewed handling of two offline settlements/reversals and dependency conflicts; no silent financial skips | Resolution workflow pending |
 | Ledger safety | Entity-specific validation and auditable rejected-event repair/quarantine | Production policy pending |
@@ -120,5 +120,10 @@ per-callback account checks. See [Native authorization](NATIVE_SYNC_AUTHORIZATIO
 This does not supply secure cloud-token provisioning or remote bearer revocation.
 
 Token delivery step 2A adds a separate disabled issuer broker and unapplied SQL
-016. See [Credential broker](CREDENTIAL_BROKER.md). Native credential storage and
-broker transport (2B) remain unimplemented; no live token delivery is activated.
+016. See [Credential broker](CREDENTIAL_BROKER.md). Native credential storage and broker transport (2B) follow in the source step
+below; no live token delivery is activated.
+
+Token delivery step 2B adds Windows Credential Manager and native WinHTTP source
+wiring, with a separate trusted provisioning utility and login-generation checks.
+See [Native delivery](NATIVE_CREDENTIAL_DELIVERY.md). No actual live provisioning
+or activation was performed; physical staging acceptance remains required.

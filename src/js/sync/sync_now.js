@@ -27,7 +27,7 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
       if(url.protocol!=="https:" || url.username || url.password || url.search || url.hash || url.pathname!=="/sync/"+action) throw new Error("Invalid sync endpoint");
       origins.add(url.origin);
     }
-    if(origins.size!==1 || typeof config.token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(config.token)) throw new Error("Invalid sync configuration");
+    if(origins.size!==1 || (config.broker!==true && (typeof config.token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(config.token)))) throw new Error("Invalid sync configuration");
     return true;
   };
   const controller = {
@@ -53,6 +53,12 @@ export function createSyncNowController({bridge,getUserKey,onState=()=>{},onAllo
         if(!validConfig(config)){emit("ready",false);return {ran:false,pushed:0,pulled:0};}
         current();emit("syncing",true);
         lease=await bridge.begin();current();
+        if(config.broker===true){
+          const approvedOrigin=new URL(config.uploadEndpoint).origin;
+          config=await bridge.credentials(lease.exchange_id);current();
+          if(!validConfig(config) || typeof config.token!=="string" || !/^[\x21-\x7e]{1,8192}$/.test(config.token) ||
+            new URL(config.uploadEndpoint).origin!==approvedOrigin)throw new Error("Invalid broker delivery");
+        }
         bindTokenToInstallation(config.token,lease.installation_id);tokenBound=true;
         const allowance=await readAllowance({endpoint:config.allowanceEndpoint,token:config.token,fetchImpl,signal:activeAbort.signal});
         current();onAllowance(allowance);

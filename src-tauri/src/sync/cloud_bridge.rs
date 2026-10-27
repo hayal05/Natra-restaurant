@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::errors::{AppError, AppResult};
 use crate::models::{User, UserRole};
 use crate::services::auth_service;
-use super::{cloud_dispatch, manager::SyncGuard};
+use super::{cloud_dispatch, native_credentials::{self,Identity}, manager::SyncGuard};
 
 // Remains closed pending secure provisioning and the other release gates.
 pub(crate) const LIVE_NEON_SYNC_ENABLED: bool = false;
@@ -17,7 +17,8 @@ pub(crate) struct CloudBridge { state: Mutex<BridgeState> }
 #[derive(Default)]
 struct BridgeState { principal: Option<Principal>, active: Option<Active> }
 struct Principal { user_id: i64, password_hash: String, generation: String, expires: Instant }
-struct Active { id: String, owner: String, expires: Instant, submitted: Vec<String>, cutoff: i64, _guard: SyncGuard }
+struct Active { id: String, owner: String, installation_id: String, expires: Instant, submitted: Vec<String>, cutoff: i64, delivery_started: bool, delivered: bool, _guard: SyncGuard }
+pub(crate) struct DeliveryContext { pub identity: Identity, exchange_id: String, owner: String }
 #[derive(Serialize)]
 pub(crate) struct Lease { exchange_id: String, installation_id: String }
 fn invalid() -> AppError { AppError::Sync("manual cloud exchange is unavailable or expired".into()) }
@@ -50,6 +51,10 @@ impl BridgeState {
     }
     fn owned(&mut self, conn: &Connection, id: &str) -> AppResult<&mut Active> {
         let owner = self.authorize(conn)?;
+        let installation: String=conn.query_row("SELECT value FROM sync_meta WHERE key='device_id'",[],|r|r.get(0))?;
+        if self.active.as_ref().map(|a|a.installation_id!=installation).unwrap_or(false) {
+            self.active.take();return Err(invalid());
+        }
         self.active.as_mut().filter(|s| s.id == id && s.owner == owner).ok_or_else(invalid)
     }
 }
@@ -96,15 +101,46 @@ impl CloudBridge {
         // cannot complete between the permission check and the read.
         Ok(action())
     }
+    fn identity(state: &mut BridgeState, conn: &Connection) -> AppResult<(Identity,String)> {
+        let owner=state.authorize(conn)?;
+        let user=state.principal.as_ref().ok_or_else(unauthorized)?.user_id;
+        let installation_id: String=conn.query_row("SELECT value FROM sync_meta WHERE key='device_id'",[],|r|r.get(0))?;
+        Ok((Identity { installation_id,local_user_id:user.to_string() },owner))
+    }
+    pub(crate) fn configuration(&self, conn: &Connection) -> AppResult<serde_json::Value> {
+        let mut state=self.state()?;
+        let (identity,_)=Self::identity(&mut state,conn)?;
+        native_credentials::available(&identity)
+    }
+    pub(crate) fn prepare_delivery(&self, conn: &Connection, id: &str) -> AppResult<DeliveryContext> {
+        let mut state=self.state()?;
+        let (identity,owner)=Self::identity(&mut state,conn)?;
+        let active=state.owned(conn,id)?;
+        if active.delivery_started { return Err(invalid()); }
+        active.delivery_started=true;
+        Ok(DeliveryContext { identity,exchange_id:id.to_string(),owner })
+    }
+    pub(crate) fn commit_delivery(&self, conn: &Connection, context: &DeliveryContext,
+        build: impl FnOnce()->AppResult<serde_json::Value>) -> AppResult<serde_json::Value> {
+        let mut state=self.state()?;
+        let (identity,owner)=Self::identity(&mut state,conn)?;
+        if owner!=context.owner || identity.local_user_id!=context.identity.local_user_id ||
+            identity.installation_id!=context.identity.installation_id { return Err(invalid()); }
+        let active=state.active.as_mut().filter(|a|a.id==context.exchange_id && a.owner==owner).ok_or_else(invalid)?;
+        if !active.delivery_started || active.delivered { return Err(invalid()); }
+        let config=build()?;
+        active.delivered=true;
+        Ok(config)
+    }
     pub(crate) fn begin(&self, conn: &Connection) -> AppResult<Lease> {
         let mut state = self.state()?;
         let owner = state.authorize(conn)?;
         if state.active.is_some() { return Err(invalid()); }
         let guard = SyncGuard::acquire().ok_or_else(invalid)?;
         let id = random_id(conn)?;
-        let installation_id = conn.query_row("SELECT value FROM sync_meta WHERE key='device_id'", [], |r| r.get(0))?;
+        let installation_id: String = conn.query_row("SELECT value FROM sync_meta WHERE key='device_id'", [], |r| r.get(0))?;
         let cutoff = conn.query_row("SELECT COALESCE(MAX(rowid),0) FROM cloud_outbox", [], |r| r.get(0))?;
-        state.active = Some(Active { id: id.clone(), owner, expires: Instant::now()+Duration::from_secs(900), submitted: vec![], cutoff, _guard: guard });
+        state.active = Some(Active { id: id.clone(), owner, installation_id:installation_id.clone(), expires: Instant::now()+Duration::from_secs(900), submitted: vec![], cutoff, delivery_started: false, delivered: false, _guard: guard });
         Ok(Lease { exchange_id: id, installation_id })
     }
     pub(crate) fn pending(&self, id: &str, conn: &Connection) -> AppResult<Vec<cloud_dispatch::PendingUpload>> {
@@ -149,6 +185,29 @@ impl CloudBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_delivery_rechecks_login_generation_and_can_complete_only_once() {
+        let _serial = super::super::manager::SYNC_TEST_LOCK.lock().unwrap();
+        let db=crate::database::Db::init_in_memory().unwrap();let mut conn=db.lock();let bridge=CloudBridge::default();
+        bridge.initialize_admin(&mut conn,"admin","test-secret","Owner").unwrap();
+        let lease=bridge.begin(&conn).unwrap();let ctx=bridge.prepare_delivery(&conn,&lease.exchange_id).unwrap();
+        assert_eq!(ctx.identity.local_user_id,"1");assert!(bridge.prepare_delivery(&conn,&lease.exchange_id).is_err());
+        bridge.commit_delivery(&conn,&ctx,||Ok(serde_json::json!({"test":true}))).unwrap();
+        assert!(bridge.commit_delivery(&conn,&ctx,||panic!("duplicate delivery")).is_err());
+        bridge.end(&lease.exchange_id,&conn).unwrap();
+        let lease=bridge.begin(&conn).unwrap();let old=bridge.prepare_delivery(&conn,&lease.exchange_id).unwrap();
+        bridge.logout().unwrap();bridge.login(&conn,"admin","test-secret").unwrap();
+        let next=bridge.begin(&conn).unwrap();
+        assert!(bridge.commit_delivery(&conn,&old,||panic!("stale owner must not get a token")).is_err());
+        let ctx=bridge.prepare_delivery(&conn,&next.exchange_id).unwrap();
+        bridge.state.lock().unwrap().active.as_mut().unwrap().expires=Instant::now();
+        assert!(bridge.commit_delivery(&conn,&ctx,||panic!("expired lease")).is_err());
+        let lease=bridge.begin(&conn).unwrap();let ctx=bridge.prepare_delivery(&conn,&lease.exchange_id).unwrap();
+        conn.execute("UPDATE users SET is_active=0 WHERE id=1",[]).unwrap();
+        assert!(bridge.commit_delivery(&conn,&ctx,||panic!("deactivated account")).is_err());
+        assert_eq!(crate::database::connection::read_cloud_pull_cursor(&conn).unwrap(),0);
+        assert!(SyncGuard::acquire().is_some());
+    }
     #[test]
     fn native_login_logout_and_account_changes_gate_all_exchange_callbacks() {
         let _serial = super::super::manager::SYNC_TEST_LOCK.lock().unwrap();

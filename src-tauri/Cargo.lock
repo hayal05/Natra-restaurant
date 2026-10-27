@@ -1930,6 +1930,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bcrypt",
+ "base64 0.22.1",
  "chrono",
  "rusqlite",
  "serde",
@@ -1937,6 +1938,8 @@ dependencies = [
  "tauri",
  "tauri-build",
  "thiserror 1.0.69",
+ "url",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

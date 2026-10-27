@@ -9,29 +9,23 @@ fn enabled() -> AppResult<()> {
     Ok(())
 }
 
-// Configuration/short-lived credentials must be supplied by an approved
-// provisioner, not the old Turso settings or frontend localStorage. None is
-// intentional for this unactivated release; no credential setter is exposed.
+// Availability is local-only and includes no credential/token. Fresh session
+// delivery is a separate explicit command after the native lease is acquired.
 #[tauri::command]
 pub fn cloud_sync_configuration(db: State<Db>, bridge: State<CloudBridge>) -> Option<serde_json::Value> {
     if !LIVE_NEON_SYNC_ENABLED { return None; }
-    let conn = db.lock();
-    bridge.with_authorization(&conn, || {
-        // An approved host provisioner supplies a short-lived session token.
-        // No setters, persistent token fields or plaintext config files are added.
-        let origin = std::env::var("NATRA_NEON_SYNC_ORIGIN").ok()?;
-        let token = std::env::var("NATRA_NEON_SESSION_TOKEN").ok()?;
-        if token.is_empty() || token.len() > 8192 || !token.bytes().all(|b| b.is_ascii_graphic()) { return None; }
-        let origin = origin.trim_end_matches('/');
-        // Full URL/path/origin validation happens before the controller begins.
-        Some(serde_json::json!({
-            "uploadEndpoint":format!("{origin}/sync/upload"),
-            "pullEndpoint":format!("{origin}/sync/pull"),
-            "allowanceEndpoint":format!("{origin}/sync/allowance"),
-            "completeEndpoint":format!("{origin}/sync/complete"),
-            "failEndpoint":format!("{origin}/sync/fail"), "token":token
-        }))
-    }).ok().flatten()
+    bridge.configuration(&db.lock()).ok()
+}
+#[tauri::command]
+pub async fn cloud_sync_credentials(db: State<'_,Db>, bridge: State<'_,CloudBridge>, exchange_id: String) -> AppResult<serde_json::Value> {
+    enabled()?;
+    let context={let conn=db.lock();bridge.prepare_delivery(&conn,&exchange_id)?};
+    let identity=context.identity.clone();
+    // No SQLite or session lock crosses blocking OS/network work.
+    let delivered=tokio::task::spawn_blocking(move||crate::sync::native_credentials::fetch(&identity))
+        .await.map_err(|_|crate::sync::native_credentials::unavailable())??;
+    let conn=db.lock();
+    bridge.commit_delivery(&conn,&context,||{delivered.ensure_current(&context.identity)?;delivered.configuration()})
 }
 #[tauri::command]
 pub fn cloud_sync_begin(db: State<Db>, bridge: State<CloudBridge>) -> AppResult<Lease> {

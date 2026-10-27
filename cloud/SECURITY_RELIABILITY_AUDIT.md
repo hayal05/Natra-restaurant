@@ -35,7 +35,7 @@ stale-callback rejection, fresh lease acquisition and shared-guard release.
    credential-verified native administrator ownership, per-callback account
    checks and lease revocation on logout/account/session changes. See
    [Native authorization](NATIVE_SYNC_AUTHORIZATION.md). Secure fresh-token
-   delivery still needs native OS storage/transport. The separate disabled
+   delivery now has [native OS storage/transport source](NATIVE_CREDENTIAL_DELIVERY.md). The separate disabled
    [broker source](CREDENTIAL_BROKER.md) adds approved subject mappings, fresh
    issuance and revocation of mapped running sessions; deployment/provisioning
    and universal bearer/metadata revocation policy remain pending. Process environment delivery is still a staging
